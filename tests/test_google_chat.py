@@ -259,7 +259,7 @@ def test_addon_message_answers_inline_rather_than_in_the_background(client, monk
     An add-on cannot post asynchronously with our credentials, so the answer
     must come back in the HTTP response itself.
     """
-    monkeypatch.setattr(gc, "run_graph", lambda e, d=None: ("153 jobs", None))
+    monkeypatch.setattr(gc, "run_graph", lambda e, d=None, buttons=True: ("153 jobs", None))
 
     response = client.post("/google-chat", json=addon_message_event("jobs last month"))
 
@@ -499,3 +499,19 @@ def test_unknown_event_types_are_ignored(client):
     response = client.post("/google-chat", json={"type": "SOMETHING_NEW"})
     assert response.status_code == 200
     assert client.spawned == []
+
+
+def test_addon_confirm_card_has_no_buttons():
+    """
+    Workspace add-ons reject the classic card-action format: Chat refuses the
+    click without ever calling the webhook, showing "unable to process your
+    request". A button that errors when someone approves a real booking is
+    worse than no button, so the add-on card offers typed yes/no instead.
+    """
+    import json
+
+    card = gc.confirm_card("Book this?", with_buttons=False)
+    rendered = json.dumps(card)
+
+    assert "buttonList" not in rendered
+    assert "yes" in rendered.lower()      # the typed instruction survives

@@ -558,7 +558,7 @@ def build_graph_input(event: dict, is_paused: bool) -> object:
 # ── Rendering ──────────────────────────────────────────────────────────────────
 
 
-def confirm_card(message: str) -> dict:
+def confirm_card(message: str, with_buttons: bool = True) -> dict:
     """
     The approval gate, as a card with buttons.
 
@@ -569,11 +569,12 @@ def confirm_card(message: str) -> dict:
     The values sent back are the same plain strings the graph already accepts,
     so `confirm.py` needs no knowledge that Chat exists.
     """
-    return {
-        "cardId": "confirm",
-        "card": {
-            "sections": [
-                {"widgets": [{"textParagraph": {"text": _to_chat_markup(message)}}]},
+    sections: list[dict] = [
+        {"widgets": [{"textParagraph": {"text": _to_chat_markup(message)}}]}
+    ]
+
+    if with_buttons:
+        sections.append(
                 {
                     "widgets": [
                         {
@@ -605,22 +606,25 @@ def confirm_card(message: str) -> dict:
                             }
                         }
                     ]
-                },
+                }
+        )
+
+    sections.append(
+        {
+            "widgets": [
                 {
-                    "widgets": [
-                        {
-                            "textParagraph": {
-                                "text": (
-                                    "<i>To change something, just reply — "
-                                    "e.g. “arrival 10-11am” or “make it 4 movers”.</i>"
-                                )
-                            }
-                        }
-                    ]
-                },
+                    "textParagraph": {
+                        "text": (
+                            "<i>Reply <b>yes</b> to go ahead, <b>no</b> to cancel, "
+                            "or say what to change — e.g. “arrival 10-11am”.</i>"
+                        )
+                    }
+                }
             ]
-        },
-    }
+        }
+    )
+
+    return {"cardId": "confirm", "card": {"sections": sections}}
 
 
 def _to_chat_markup(text: str) -> str:
@@ -690,7 +694,8 @@ def reset_thread(thread_id: str) -> bool:
         return False
 
 
-def run_graph(event: dict, decision: str | None = None) -> tuple[str, dict | None]:
+def run_graph(event: dict, decision: str | None = None,
+              buttons: bool = True) -> tuple[str, dict | None]:
     """
     Run the graph for one event and return (text, card).
 
@@ -722,7 +727,7 @@ def run_graph(event: dict, decision: str | None = None) -> tuple[str, dict | Non
         if interrupt_value := _pending_interrupt(thread_id):
             text = interrupt_value.get("message", "")
             if interrupt_value.get("type") == "confirm":
-                return "", confirm_card(text)
+                return "", confirm_card(text, with_buttons=buttons)
             return text, None
 
         final = _graph.get_state(cfg).values
@@ -887,7 +892,7 @@ async def google_chat_webhook(request: Request):
             # opposite: the work completed.
             started = time.monotonic()
             try:
-                text, card = run_graph(event, decision)
+                text, card = run_graph(event, decision, buttons=False)
             except Exception as exc:
                 _record_error(exc)
                 return reply(
