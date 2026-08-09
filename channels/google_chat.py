@@ -14,17 +14,34 @@ This file contains no booking logic. It does four things:
   4. Renders the result back — as a card with buttons when the agent is asking
      for approval, as plain text otherwise.
 
+── Two dialects ───────────────────────────────────────────────────────────────
+
+This app is registered as a Google Workspace ADD-ON, which speaks differently
+from a classic Chat app in both directions:
+
+  receives  {"chat": {"messagePayload": ...}}   — no top-level "type"
+  replies   {"hostAppDataAction": ...}          — not a bare message
+
+`normalize_event` and `addon_reply` translate at the edges, so everything in
+between — and its tests — is written against one shape. Classic payloads pass
+through untouched, so the file still works if the app is ever re-registered as
+a classic Chat app.
+
 ── The 30-second problem ──────────────────────────────────────────────────────
 
-Google Chat abandons a webhook that takes longer than 30 seconds. A screenshot
-intake does vision extraction, address resolution, several model calls, Maps and
-GoHighLevel — routinely more than that.
+Google Chat abandons a webhook that takes longer than 30 seconds.
 
-So the webhook returns 200 immediately and does the real work in a background
-task, posting results through the Chat REST API. The user sees a placeholder
-message appear at once, which is then edited in place as the agent works and
-finally becomes the answer. One message that evolves, rather than a wall of
-fragments.
+A classic Chat app escapes this by returning 200 immediately and posting the
+answer later through the Chat REST API — that is what `process_event`,
+`post_message` and `update_message` below are for, and they are still used on
+the classic path.
+
+An add-on cannot: its identity is Google's own gcp-sa-gsuiteaddons account, not
+the service account we hold, so we cannot post on its behalf. The add-on path
+therefore answers INLINE, inside the HTTP response, and the whole run has to
+fit inside 30 seconds. Runs are timed (see `_record_run`) because exceeding the
+deadline looks identical to a crash from the user's side while meaning the
+opposite: the booking completed.
 
 ── Why threads matter here ────────────────────────────────────────────────────
 
