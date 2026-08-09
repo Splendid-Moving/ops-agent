@@ -75,11 +75,29 @@ def health():
 
 @app.get("/api/status")
 def status():
+    """
+    Health plus enough Chat config to diagnose a 401 without reading logs.
+
+    Nothing here is secret: the audience is either a public webhook URL or a
+    project number, and credentials are reported only as present/absent. A
+    silent 401 is otherwise indistinguishable from a forged request, and
+    Railway's interleaved logs make it slow to pin down.
+    """
     return {
         "dry_run": config.dry_run(),
         "backend": config.model_backend(),
         "deposit": config.deposit_amount(),
         "web_ui": bool(config.web_ui_token()),
+        "chat": {
+            "verify_requests": config.chat_verify_requests(),
+            "audience": config.chat_audience() or None,
+            "audience_type": (
+                "project_number" if config.chat_audience_is_project_number()
+                else "endpoint_url" if config.chat_audience()
+                else "NOT SET"
+            ),
+            "credentials_present": bool(config.chat_credentials_b64()),
+        },
     }
 
 
