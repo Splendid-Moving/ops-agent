@@ -609,20 +609,9 @@ def confirm_card(message: str, with_buttons: bool = True) -> dict:
                 }
         )
 
-    sections.append(
-        {
-            "widgets": [
-                {
-                    "textParagraph": {
-                        "text": (
-                            "<i>Reply <b>yes</b> to go ahead, <b>no</b> to cancel, "
-                            "or say what to change — e.g. “arrival 10-11am”.</i>"
-                        )
-                    }
-                }
-            ]
-        }
-    )
+    # No instruction line here: confirm.py already ends the summary with
+    # "Reply 'yes' to go ahead, 'no' to cancel, or tell me what to change".
+    # Adding it again printed the same sentence twice on every booking.
 
     return {"cardId": "confirm", "card": {"sections": sections}}
 
@@ -669,6 +658,49 @@ _RESET_WORDS = {
     "reset", "/reset", "start over", "start again", "clear",
     "clear chat", "new booking", "cancel booking", "forget it", "nevermind",
 }
+
+
+#: Slash commands, matched on the command word alone.
+#:
+#: These work whether or not they are registered in the Chat API console: a
+#: registered command arrives with the text stripped out, and an unregistered
+#: one simply arrives as a message beginning with "/". Both are handled, so the
+#: console registration only buys the autocomplete menu.
+_SLASH_RESET = {"/clear", "/reset", "/new", "/restart", "/cancel"}
+_SLASH_HELP = {"/help", "/commands", "/?"}
+
+HELP_TEXT = """*Splendid Moving ops agent*
+
+*Ask about jobs*
+  _how many jobs did we have last month?_
+  _what's on the calendar Friday?_
+
+*Book a job*
+  Send a screenshot of the customer's details. I'll read it, ask for
+  anything missing, then show you exactly what I'll create and wait for
+  you to reply *yes*.
+
+*Commands*
+  `/clear`  — forget this conversation and start fresh
+  `/help`   — this message
+
+Nothing is created until you approve it."""
+
+
+def slash_command(event: dict) -> str:
+    """The leading /command of this message, lowercased, or ''."""
+    message = event.get("message") or {}
+    # argumentText has the command removed when it is registered, so the raw
+    # text is the reliable place to look.
+    for candidate in (message.get("text"), message.get("argumentText")):
+        text = (candidate or "").strip()
+        # Strip a leading @mention, which Chat includes in `text`.
+        if text.startswith("@"):
+            parts = text.split(None, 1)
+            text = parts[1].strip() if len(parts) > 1 else ""
+        if text.startswith("/"):
+            return text.split()[0].lower()
+    return ""
 
 
 def is_reset_request(text: str) -> bool:
@@ -861,7 +893,12 @@ async def google_chat_webhook(request: Request):
     if event_type == "REMOVED_FROM_SPACE":
         return {}
 
-    if event_type == "MESSAGE" and is_reset_request(strip_mention(event)):
+    if event_type == "MESSAGE" and (command := slash_command(event)) in _SLASH_HELP and command:
+        return reply(HELP_TEXT)
+
+    if event_type == "MESSAGE" and (
+        slash_command(event) in _SLASH_RESET or is_reset_request(strip_mention(event))
+    ):
         # Handled before the graph runs: the whole point is to escape a
         # conversation that may be stuck mid-booking.
         thread_id = thread_id_for(event)

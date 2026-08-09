@@ -510,8 +510,60 @@ def test_addon_confirm_card_has_no_buttons():
     """
     import json
 
-    card = gc.confirm_card("Book this?", with_buttons=False)
-    rendered = json.dumps(card)
+    summary = "Book this?\n\nReply 'yes' to go ahead, 'no' to cancel."
+    rendered = json.dumps(gc.confirm_card(summary, with_buttons=False))
 
     assert "buttonList" not in rendered
-    assert "yes" in rendered.lower()      # the typed instruction survives
+    # The instruction comes from confirm.py's summary, which the card renders
+    # verbatim. The card must not add its own copy — that printed the same
+    # sentence twice on every booking.
+    assert rendered.lower().count("reply 'yes'") == 1
+
+
+# ── slash commands ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("text", ["/clear", "/reset", "/NEW", "/help", "/?"])
+def test_slash_commands_are_recognised(text):
+    assert gc.slash_command(message_event(text)) == text.lower()
+
+
+def test_slash_command_survives_a_leading_mention():
+    """Chat puts '@Ops Agent /clear' in message.text."""
+    event = message_event("/clear")
+    event["message"]["text"] = "@Ops Agent /clear"
+    assert gc.slash_command(event) == "/clear"
+
+
+def test_registered_command_with_stripped_text_still_matches():
+    """A command registered in the console arrives with argumentText emptied."""
+    event = message_event("")
+    event["message"]["text"] = "/clear"
+    event["message"]["argumentText"] = ""
+    assert gc.slash_command(event) == "/clear"
+
+
+def test_ordinary_messages_have_no_slash_command():
+    assert gc.slash_command(message_event("how many jobs last month")) == ""
+
+
+def test_slash_clear_resets(client, monkeypatch):
+    cleared = []
+    monkeypatch.setattr(gc, "reset_thread", lambda tid: cleared.append(tid) or True)
+
+    event = addon_message_event("/clear")
+    response = client.post("/google-chat", json=event)
+
+    text = response.json()["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]["text"]
+    assert "Cleared" in text
+    assert cleared == ["gchat:spaces/AAA"]
+
+
+def test_slash_help_never_runs_the_graph(client, monkeypatch):
+    monkeypatch.setattr(gc, "run_graph",
+                        lambda *a, **kw: pytest.fail("help must not run the graph"))
+
+    response = client.post("/google-chat", json=addon_message_event("/help"))
+
+    text = response.json()["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]["text"]
+    assert "/clear" in text
