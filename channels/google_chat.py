@@ -65,6 +65,30 @@ _PROGRESS_PATCH_INTERVAL = 2.0
 #: stays a plain function and the graph is built exactly once.
 _graph = None
 
+#: Why the most recent webhook call was rejected, readable over HTTP.
+#:
+#: Railway interleaves stdout and stderr unpredictably, and a rejection that
+#: logs nothing findable is indistinguishable from one that never happened.
+#: This holds the answer in memory so it can be fetched directly instead of
+#: hunted for. Never contains the token itself — only its public claims.
+_last_rejection: dict | None = None
+
+
+def last_rejection() -> dict | None:
+    return _last_rejection
+
+
+def _record_rejection(reason: str, **detail) -> None:
+    global _last_rejection
+    from datetime import datetime, timezone
+
+    _last_rejection = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "reason": reason,
+        **detail,
+    }
+    logger.error("Chat request rejected: %s %s", reason, detail)
+
 
 def attach_graph(graph) -> None:
     global _graph
@@ -87,12 +111,16 @@ def verify_request(authorization: str | None) -> bool:
         return True
 
     if not authorization or not authorization.startswith("Bearer "):
-        logger.warning("Chat webhook called without a bearer token")
+        _record_rejection(
+            "no_bearer_token",
+            authorization_header=("absent" if not authorization
+                                  else f"present but starts with {authorization[:12]!r}"),
+        )
         return False
 
     audience = config.chat_audience()
     if not audience:
-        logger.error("GOOGLE_CHAT_AUDIENCE is not set — cannot verify requests")
+        _record_rejection("audience_not_configured")
         return False
 
     token = authorization.removeprefix("Bearer ").strip()
@@ -134,10 +162,11 @@ def _log_why_verification_failed(token: str, expected_audience: str, exc: Except
         from google.auth import jwt
 
         claims = jwt.decode(token, verify=False)
-    except Exception:
-        logger.warning(
-            "Chat token rejected: not a readable JWT (%s: %s)",
-            type(exc).__name__, exc,
+    except Exception as decode_exc:
+        _record_rejection(
+            "token_not_a_readable_jwt",
+            original_error=f"{type(exc).__name__}: {exc}",
+            decode_error=f"{type(decode_exc).__name__}: {decode_exc}",
         )
         return
 
@@ -145,18 +174,19 @@ def _log_why_verification_failed(token: str, expected_audience: str, exc: Except
     issuer = claims.get("iss") or claims.get("email")
 
     if actual != expected_audience:
-        logger.error(
-            "Chat token rejected: AUDIENCE MISMATCH\n"
-            "  token says : %r\n"
-            "  we expect  : %r\n"
-            "  -> set GOOGLE_CHAT_AUDIENCE to the token's value, "
-            "or change Authentication Audience in the Chat API console to match.",
-            actual, expected_audience,
+        _record_rejection(
+            "audience_mismatch",
+            token_audience=actual,
+            expected_audience=expected_audience,
+            issuer=issuer,
+            fix=f"Set GOOGLE_CHAT_AUDIENCE to {actual!r}",
         )
     else:
-        logger.error(
-            "Chat token rejected despite matching audience %r (issuer=%r): %s: %s",
-            actual, issuer, type(exc).__name__, exc,
+        _record_rejection(
+            "signature_or_expiry",
+            audience=actual,
+            issuer=issuer,
+            error=f"{type(exc).__name__}: {exc}",
         )
 
 
