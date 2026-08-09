@@ -49,9 +49,41 @@ def maps_api_key() -> str:
 
 # ── Google Chat ────────────────────────────────────────────────────────────────
 
-#: Google Chat signs every webhook request with a JWT from this service account.
-#: A request whose token is issued by anyone else is not from Google Chat.
+#: Classic Chat apps sign webhook requests with this service account.
 CHAT_ISSUER = "chat@system.gserviceaccount.com"
+
+#: Chat apps built as Google Workspace add-ons sign with a per-project account
+#: instead: service-<PROJECT_NUMBER>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com
+#: Checking only for CHAT_ISSUER rejects every add-on request — and because the
+#: audience still matches, it looks exactly like a valid token being refused.
+CHAT_ADDON_ISSUER_SUFFIX = "@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
+
+
+def chat_allowed_issuers() -> set[str]:
+    """
+    Exact issuer allow-list, if pinned via GOOGLE_CHAT_ISSUER.
+
+    Empty means "accept either known Google signer" — see `issuer_is_google`.
+    Pinning is tighter but needs updating if the app is rebuilt in a new
+    project, so it stays optional.
+    """
+    raw = os.getenv("GOOGLE_CHAT_ISSUER", "").strip()
+    return {e.strip() for e in raw.split(",") if e.strip()}
+
+
+def issuer_is_google(email: str) -> bool:
+    """
+    Whether this token was signed by a Google service account we accept.
+
+    Safe without pinning the exact address, because the audience check has
+    already bound the token to this specific endpoint URL — and Google only
+    mints those for this app.
+    """
+    if not email:
+        return False
+    if allowed := chat_allowed_issuers():
+        return email in allowed
+    return email == CHAT_ISSUER or email.endswith(CHAT_ADDON_ISSUER_SUFFIX)
 
 CHAT_SCOPES = ["https://www.googleapis.com/auth/chat.bot"]
 

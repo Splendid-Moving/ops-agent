@@ -160,11 +160,28 @@ def verify_request(authorization: str | None) -> bool:
             claims = google_id_token.verify_token(
                 token, request, audience, certs_url=certs_url
             )
-            return claims.get("iss") == config.CHAT_ISSUER
+            signer = claims.get("iss", "")
+        else:
+            # Endpoint-URL audience: a standard OpenID Connect ID token. The
+            # signer is in `email`; `iss` is accounts.google.com for both
+            # classic apps and Workspace add-ons, so it can't distinguish them.
+            claims = google_id_token.verify_oauth2_token(token, request, audience)
+            signer = claims.get("email", "")
 
-        # Endpoint-URL audience: a standard OpenID Connect ID token.
-        claims = google_id_token.verify_oauth2_token(token, request, audience)
-        return claims.get("email") == config.CHAT_ISSUER
+        if config.issuer_is_google(signer):
+            return True
+
+        # A verified token from an unexpected signer. This MUST be recorded:
+        # returning False silently here produced a 401 with no log line and no
+        # recorded reason, which is what made this bug so hard to find.
+        _record_rejection(
+            "unexpected_issuer",
+            token_issuer=signer or "(absent)",
+            accepted=(sorted(config.chat_allowed_issuers())
+                      or [config.CHAT_ISSUER, f"*{config.CHAT_ADDON_ISSUER_SUFFIX}"]),
+            note="Workspace add-ons sign as service-<project>@gcp-sa-gsuiteaddons…",
+        )
+        return False
 
     except Exception as exc:
         _log_why_verification_failed(token, audience, exc)

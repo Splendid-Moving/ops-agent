@@ -201,6 +201,63 @@ def test_a_forged_token_is_rejected(monkeypatch):
     assert gc.verify_request("Bearer totally.made.up") is False
 
 
+def test_workspace_addon_issuer_is_accepted(monkeypatch):
+    """
+    Chat apps built as Workspace add-ons sign as
+    service-<project>@gcp-sa-gsuiteaddons.iam.gserviceaccount.com, not
+    chat@system. Accepting only chat@system rejected every real request while
+    the audience matched perfectly — which is indistinguishable from a
+    correctly-configured app being mysteriously ignored.
+    """
+    monkeypatch.delenv("GOOGLE_CHAT_ISSUER", raising=False)
+    from services import config
+
+    assert config.issuer_is_google(
+        "service-326684148481@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"
+    )
+    assert config.issuer_is_google("chat@system.gserviceaccount.com")
+
+
+def test_non_google_issuers_are_rejected(monkeypatch):
+    monkeypatch.delenv("GOOGLE_CHAT_ISSUER", raising=False)
+    from services import config
+
+    assert not config.issuer_is_google("attacker@evil.com")
+    assert not config.issuer_is_google("")
+    # Lookalike domain must not pass on a substring match.
+    assert not config.issuer_is_google("x@gcp-sa-gsuiteaddons.iam.gserviceaccount.com.evil.com")
+
+
+def test_pinned_issuer_overrides_the_default_pair(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CHAT_ISSUER", "service-123@gcp-sa-gsuiteaddons.iam.gserviceaccount.com")
+    from services import config
+
+    assert config.issuer_is_google("service-123@gcp-sa-gsuiteaddons.iam.gserviceaccount.com")
+    # Pinning means pinning — chat@system is no longer implicitly trusted.
+    assert not config.issuer_is_google("chat@system.gserviceaccount.com")
+
+
+def test_an_unexpected_issuer_is_recorded_never_silent(monkeypatch):
+    """
+    The original bug: a verified token from an unexpected signer returned False
+    with no log and no record, so the 401 had no discoverable cause.
+    """
+    monkeypatch.setenv("CHAT_VERIFY_REQUESTS", "true")
+    monkeypatch.setenv("GOOGLE_CHAT_AUDIENCE", "https://example.com/google-chat")
+    monkeypatch.delenv("GOOGLE_CHAT_ISSUER", raising=False)
+
+    monkeypatch.setattr(
+        gc.google_id_token, "verify_oauth2_token",
+        lambda *a, **kw: {"email": "someone-else@example.com", "aud": "https://example.com/google-chat"},
+    )
+
+    assert gc.verify_request("Bearer whatever") is False
+
+    recorded = gc.last_rejection()
+    assert recorded["reason"] == "unexpected_issuer"
+    assert recorded["token_issuer"] == "someone-else@example.com"
+
+
 def test_webhook_returns_401_when_unverified(monkeypatch):
     monkeypatch.setenv("CHAT_VERIFY_REQUESTS", "true")
     monkeypatch.setenv("GOOGLE_CHAT_AUDIENCE", "1234567890")
