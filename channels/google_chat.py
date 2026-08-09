@@ -74,6 +74,24 @@ _graph = None
 _last_rejection: dict | None = None
 
 
+#: Every request to the webhook, counted before any authentication runs.
+#:
+#: Distinguishes "Google never called us" from "Google called and was rejected"
+#: — the two have identical symptoms in Chat ("not responding") but completely
+#: different causes. Counting before the auth check means no path can hide.
+_requests_seen = 0
+_last_request_at: str | None = None
+_started_at: str | None = None
+
+
+def traffic() -> dict:
+    return {
+        "requests_seen": _requests_seen,
+        "last_request_at": _last_request_at,
+        "process_started_at": _started_at,
+    }
+
+
 def last_rejection() -> dict | None:
     return _last_rejection
 
@@ -91,8 +109,13 @@ def _record_rejection(reason: str, **detail) -> None:
 
 
 def attach_graph(graph) -> None:
-    global _graph
+    """Called once at startup. Also stamps process start, so a restart that
+    resets the in-memory counters is visible rather than silently misleading."""
+    global _graph, _started_at
+    from datetime import datetime, timezone
+
     _graph = graph
+    _started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 # ── Authentication ─────────────────────────────────────────────────────────────
@@ -551,6 +574,14 @@ _spawn: Callable[..., None] = lambda fn, *a, **kw: threading.Thread(
 
 @router.post("/google-chat")
 async def google_chat_webhook(request: Request):
+    global _requests_seen, _last_request_at
+    from datetime import datetime, timezone
+
+    # Count first, before anything can reject or raise. This is the one number
+    # that separates "Google never called" from "Google called and failed".
+    _requests_seen += 1
+    _last_request_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     if not verify_request(request.headers.get("authorization")):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 

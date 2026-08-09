@@ -97,6 +97,7 @@ def status():
                 else "NOT SET"
             ),
             "credentials_present": bool(config.chat_credentials_b64()),
+            "traffic": google_chat.traffic(),
             "last_rejection": google_chat.last_rejection(),
         },
     }
