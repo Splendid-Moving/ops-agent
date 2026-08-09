@@ -327,6 +327,90 @@ def download_attachment(attachment: dict) -> tuple[bytes, str] | None:
         return None
 
 
+# ── Workspace add-on translation ──────────────────────────────────────────────
+#
+# This app is configured as a Google Workspace add-on, which speaks a different
+# dialect from a classic Chat app in BOTH directions:
+#
+#   receives  {"chat": {"messagePayload": {...}}}   — no top-level "type"
+#   expects   {"hostAppDataAction": {...}}          — not a bare message
+#
+# Rather than teach the whole file two dialects, translate at the edges: an
+# add-on payload becomes the classic shape on the way in, and replies get
+# wrapped on the way out. Everything between is unchanged — as are its tests.
+
+#: Add-on payload key -> the classic event type it corresponds to.
+_ADDON_PAYLOADS = {
+    "messagePayload": "MESSAGE",
+    "addedToSpacePayload": "ADDED_TO_SPACE",
+    "removedFromSpacePayload": "REMOVED_FROM_SPACE",
+    "buttonClickedPayload": "CARD_CLICKED",
+    "appCommandPayload": "MESSAGE",
+}
+
+#: Shape of the last unrecognised payload, for diagnosis over HTTP. Keys only —
+#: the values contain customer details.
+_last_unknown_event: dict | None = None
+
+
+def last_unknown_event() -> dict | None:
+    return _last_unknown_event
+
+
+def is_addon_event(raw: dict) -> bool:
+    return "chat" in raw and isinstance(raw.get("chat"), dict)
+
+
+def normalize_event(raw: dict) -> dict:
+    """
+    Return a classic-shaped Chat event, whichever dialect arrived.
+
+    Classic payloads pass through untouched, so this stays correct if the app
+    is ever rebuilt as a non-add-on Chat app.
+    """
+    global _last_unknown_event
+
+    if not is_addon_event(raw):
+        return raw
+
+    chat = raw["chat"]
+
+    for key, event_type in _ADDON_PAYLOADS.items():
+        if payload := chat.get(key):
+            event = {"type": event_type, **payload}
+            # Button parameters live in commonEventObject for add-ons, not on
+            # the payload itself.
+            if event_type == "CARD_CLICKED":
+                common = raw.get("commonEventObject") or {}
+                event["_addon_parameters"] = common.get("parameters") or {}
+                event["_addon_invoked_function"] = (
+                    common.get("invokedFunction")
+                    or payload.get("invokedFunction", "")
+                )
+            return event
+
+    _last_unknown_event = {
+        "chat_keys": sorted(chat.keys()),
+        "top_level_keys": sorted(raw.keys()),
+    }
+    logger.error("Unrecognised add-on payload: %s", _last_unknown_event)
+    return {"type": None}
+
+
+def addon_reply(text: str = "", card: dict | None = None) -> dict:
+    """Wrap a reply in the DataActions envelope an add-on must return."""
+    message: dict[str, Any] = {}
+    if text:
+        message["text"] = text
+    if card:
+        message["cardsV2"] = [card]
+    return {
+        "hostAppDataAction": {
+            "chatDataAction": {"createMessageAction": {"message": message}}
+        }
+    }
+
+
 # ── Event -> graph translation ────────────────────────────────────────────────
 
 
@@ -516,6 +600,50 @@ def _pending_interrupt(thread_id: str) -> dict | None:
     return None
 
 
+def run_graph(event: dict, decision: str | None = None) -> tuple[str, dict | None]:
+    """
+    Run the graph for one event and return (text, card).
+
+    Knows nothing about how the answer gets delivered — the add-on path returns
+    it inline, the classic path posts it via the API. Never raises: a failure
+    becomes a message the user can actually read.
+    """
+    thread_id = thread_id_for(event)
+    cfg = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        paused = _is_paused(thread_id)
+
+        if decision is not None:
+            # A button press. Only meaningful against a paused graph; if the
+            # booking already resolved (clicked twice, or answered in text
+            # first) this must not start a new run.
+            if not paused:
+                return "That booking is already resolved.", None
+            graph_input: object = Command(resume=decision)
+        else:
+            graph_input = build_graph_input(event, paused)
+
+        _graph.invoke(graph_input, cfg)
+
+        if interrupt_value := _pending_interrupt(thread_id):
+            text = interrupt_value.get("message", "")
+            if interrupt_value.get("type") == "confirm":
+                return "", confirm_card(text)
+            return text, None
+
+        final = _graph.get_state(cfg).values
+        messages = final.get("messages") or []
+        return (str(messages[-1].content) if messages else "(no response)"), None
+
+    except Exception as exc:
+        logger.exception("Graph run failed for %s", thread_id)
+        return (
+            "Something broke and the booking did *not* go through.\n\n"
+            f"`{type(exc).__name__}: {exc}`"
+        ), None
+
+
 def process_event(event: dict, decision: str | None = None) -> None:
     """
     Run the graph for one Chat event and post the result. Runs in a background
@@ -602,38 +730,73 @@ async def google_chat_webhook(request: Request):
     if not verify_request(request.headers.get("authorization")):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-    event = await request.json()
+    raw = await request.json()
+    addon = is_addon_event(raw)
+    event = normalize_event(raw)
     event_type = event.get("type")
 
+    def reply(text: str = "", card: dict | None = None) -> dict:
+        """Shape a synchronous reply for whichever dialect is in use."""
+        if addon:
+            return addon_reply(text, card)
+        body: dict[str, Any] = {}
+        if text:
+            body["text"] = text
+        if card:
+            body["cardsV2"] = [card]
+        return body
+
     if event_type == "ADDED_TO_SPACE":
-        return {
-            "text": (
-                "Hi — I'm the Splendid Moving ops agent.\n\n"
-                "Ask me about the calendar (*how many jobs did we have last "
-                "month?*), or send me a screenshot of a customer enquiry and "
-                "I'll book it. I'll always show you exactly what I'm about to "
-                "do before anything happens."
-            )
-        }
+        return reply(
+            "Hi — I'm the Splendid Moving ops agent.\n\n"
+            "Ask me about the calendar (*how many jobs did we have last "
+            "month?*), or send me a screenshot of a customer enquiry and "
+            "I'll book it. I'll always show you exactly what I'm about to "
+            "do before anything happens."
+        )
 
     if event_type == "REMOVED_FROM_SPACE":
         return {}
 
-    if event_type == "CARD_CLICKED":
-        action = event.get("common", {}).get("invokedFunction") or (
-            event.get("action") or {}
-        ).get("actionMethodName")
-        if action == "confirm_decision":
-            params = {
-                p.get("key"): p.get("value")
-                for p in (event.get("action") or {}).get("parameters") or []
-            }
-            _spawn(process_event, event, params.get("decision", "no"))
-        return {}
+    if event_type in ("MESSAGE", "CARD_CLICKED"):
+        decision = None
+        if event_type == "CARD_CLICKED":
+            decision = _button_decision(event)
+            if decision is None:
+                return {}
 
-    if event_type == "MESSAGE":
-        _spawn(process_event, event)
+        if addon:
+            # Add-ons must answer inline: the app's identity belongs to
+            # Google's add-on service account, not to the service account we
+            # hold, so posting asynchronously through the Chat API is not
+            # available to us here. Chat's 30-second deadline therefore applies
+            # to the whole run — see the note in the module docstring.
+            text, card = run_graph(event, decision)
+            return reply(text, card)
+
+        _spawn(process_event, event, decision)
         return {}
 
     logger.info("Ignoring Chat event type %r", event_type)
     return {}
+
+
+def _button_decision(event: dict) -> str | None:
+    """Pull the clicked button's value out of either dialect."""
+    addon_params = event.get("_addon_parameters")
+    if addon_params is not None:
+        function = event.get("_addon_invoked_function", "")
+        if function != "confirm_decision":
+            return None
+        return addon_params.get("decision", "no")
+
+    function = (event.get("common", {}) or {}).get("invokedFunction") or (
+        event.get("action") or {}
+    ).get("actionMethodName")
+    if function != "confirm_decision":
+        return None
+    params = {
+        p.get("key"): p.get("value")
+        for p in (event.get("action") or {}).get("parameters") or []
+    }
+    return params.get("decision", "no")

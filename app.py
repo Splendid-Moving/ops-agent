@@ -99,6 +99,7 @@ def status():
             "credentials_present": bool(config.chat_credentials_b64()),
             "traffic": google_chat.traffic(),
             "last_rejection": google_chat.last_rejection(),
+            "last_unknown_event": google_chat.last_unknown_event(),
         },
     }
 

@@ -142,6 +142,106 @@ def test_bot_mention_is_stripped():
     assert gc.strip_mention(message_event("book this job")) == "book this job"
 
 
+# ── Workspace add-on dialect ──────────────────────────────────────────────────
+#
+# The app is configured as a Workspace add-on, which wraps events differently
+# and demands a different reply envelope. Getting this wrong produced a silent
+# 200 with no answer in Chat — no error anywhere.
+
+
+def addon_message_event(text="hello", space="spaces/AAA"):
+    return {
+        "chat": {
+            "messagePayload": {
+                "message": {"argumentText": text, "text": f"@Ops Agent {text}"},
+                "space": {"name": space, "spaceThreadingState": "UNTHREADED_MESSAGES"},
+            }
+        },
+        "commonEventObject": {},
+    }
+
+
+def test_addon_message_payload_normalizes_to_a_classic_message_event():
+    """Add-on payloads carry no top-level `type`, so dispatch found nothing."""
+    event = gc.normalize_event(addon_message_event("how many jobs last month"))
+
+    assert event["type"] == "MESSAGE"
+    assert gc.strip_mention(event) == "how many jobs last month"
+    assert gc.thread_id_for(event) == "gchat:spaces/AAA"
+
+
+def test_classic_payloads_still_pass_through_untouched():
+    """Must keep working if the app is ever rebuilt as a classic Chat app."""
+    classic = message_event("hi")
+    assert gc.normalize_event(classic) == classic
+
+
+def test_addon_button_click_carries_parameters_from_common_event_object():
+    """Add-ons put button parameters in commonEventObject, not on the payload."""
+    raw = {
+        "chat": {"buttonClickedPayload": {
+            "message": {"argumentText": ""},
+            "space": {"name": "spaces/AAA"},
+        }},
+        "commonEventObject": {
+            "invokedFunction": "confirm_decision",
+            "parameters": {"decision": "yes"},
+        },
+    }
+    event = gc.normalize_event(raw)
+
+    assert event["type"] == "CARD_CLICKED"
+    assert gc._button_decision(event) == "yes"
+
+
+def test_unrecognised_addon_payload_is_recorded_not_swallowed():
+    event = gc.normalize_event({"chat": {"somethingNewPayload": {"a": 1}}})
+
+    assert event["type"] is None
+    assert "somethingNewPayload" in gc.last_unknown_event()["chat_keys"]
+
+
+def test_addon_reply_uses_the_data_actions_envelope():
+    """
+    A bare {"text": ...} is accepted with 200 and then silently displays
+    nothing — which is exactly how this failed.
+    """
+    body = gc.addon_reply("done")
+    message = body["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+
+    assert message["text"] == "done"
+
+
+def test_addon_card_reply_is_wrapped_too():
+    body = gc.addon_reply("", gc.confirm_card("Book this?"))
+    message = body["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]
+
+    assert "cardsV2" in message
+
+
+def test_addon_message_answers_inline_rather_than_in_the_background(client, monkeypatch):
+    """
+    An add-on cannot post asynchronously with our credentials, so the answer
+    must come back in the HTTP response itself.
+    """
+    monkeypatch.setattr(gc, "run_graph", lambda e, d=None: ("153 jobs", None))
+
+    response = client.post("/google-chat", json=addon_message_event("jobs last month"))
+
+    body = response.json()
+    text = body["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]["text"]
+    assert text == "153 jobs"
+    assert client.spawned == []      # nothing was backgrounded
+
+
+def test_addon_added_to_space_is_wrapped(client):
+    raw = {"chat": {"addedToSpacePayload": {"space": {"name": "spaces/AAA"}}}}
+    response = client.post("/google-chat", json=raw)
+
+    text = response.json()["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]["text"]
+    assert "Splendid Moving" in text
+
+
 # ── the confirm card ──────────────────────────────────────────────────────────
 
 
