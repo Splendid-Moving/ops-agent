@@ -744,7 +744,12 @@ async def google_chat_webhook(request: Request):
     if not verify_request(request.headers.get("authorization")):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
 
-    raw = await request.json()
+    try:
+        raw = await request.json()
+    except Exception:
+        logger.exception("Chat webhook received unparseable JSON")
+        return {}
+
     addon = is_addon_event(raw)
     event = normalize_event(raw)
     event_type = event.get("type")
@@ -777,7 +782,13 @@ async def google_chat_webhook(request: Request):
         if event_type == "CARD_CLICKED":
             decision = _button_decision(event)
             if decision is None:
-                return {}
+                # Must not return a bare {} here: Chat renders that as "Ops
+                # Agent is unable to process your request", which reads like a
+                # crash to someone who just pressed "Book it" on a real job.
+                return reply(
+                    "I couldn't read that button press. Reply *yes* to go "
+                    "ahead or *no* to cancel — nothing has been created."
+                )
 
         if addon:
             # Add-ons must answer inline: the app's identity belongs to
@@ -796,21 +807,53 @@ async def google_chat_webhook(request: Request):
 
 
 def _button_decision(event: dict) -> str | None:
-    """Pull the clicked button's value out of either dialect."""
-    addon_params = event.get("_addon_parameters")
-    if addon_params is not None:
-        function = event.get("_addon_invoked_function", "")
-        if function != "confirm_decision":
-            return None
-        return addon_params.get("decision", "no")
+    """
+    Pull the clicked button's value out of whichever dialect arrived.
 
-    function = (event.get("common", {}) or {}).get("invokedFunction") or (
-        event.get("action") or {}
-    ).get("actionMethodName")
-    if function != "confirm_decision":
-        return None
-    params = {
-        p.get("key"): p.get("value")
-        for p in (event.get("action") or {}).get("parameters") or []
+    Deliberately forgiving about *where* the value sits. Google moved both the
+    function name and the parameters between the classic and add-on formats,
+    and a button that silently does nothing is worse than one that guesses:
+    the booking is already summarised and the user has pressed "Book it".
+
+    Returns None only when this genuinely isn't our button — and records the
+    payload shape when it looks like ours but can't be read, so the format can
+    be corrected rather than guessed at again.
+    """
+    global _last_unknown_event
+
+    # Function name — add-on puts it in commonEventObject, classic in
+    # common.invokedFunction or action.actionMethodName.
+    function = (
+        event.get("_addon_invoked_function")
+        or (event.get("common") or {}).get("invokedFunction")
+        or (event.get("action") or {}).get("actionMethodName")
+        or ""
+    )
+
+    # Parameters — a plain map for add-ons, a list of key/value pairs classically.
+    params: dict = {}
+    if isinstance(event.get("_addon_parameters"), dict):
+        params = dict(event["_addon_parameters"])
+    if not params:
+        for pair in (event.get("action") or {}).get("parameters") or []:
+            if isinstance(pair, dict) and "key" in pair:
+                params[pair["key"]] = pair.get("value")
+    if not params and isinstance((event.get("common") or {}).get("parameters"), dict):
+        params = dict(event["common"]["parameters"])
+
+    decision = params.get("decision")
+
+    if decision in ("yes", "no"):
+        return decision
+
+    if function and function != "confirm_decision":
+        return None      # somebody else's button
+
+    _last_unknown_event = {
+        "what": "card_click_without_a_readable_decision",
+        "invoked_function": function or "(absent)",
+        "parameters_found": params or "(none)",
+        "event_keys": sorted(event.keys()),
     }
-    return params.get("decision", "no")
+    logger.error("Unreadable card click: %s", _last_unknown_event)
+    return None
