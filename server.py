@@ -36,11 +36,32 @@ DB_PATH = Path(__file__).parent / ".agent_threads.sqlite"
 
 app = FastAPI(title="Splendid Moving ops agent")
 
-# SQLite rather than in-memory so a server restart doesn't lose a half-finished
-# booking that's paused waiting on an answer.
-_cm = SqliteSaver.from_conn_string(str(DB_PATH))
-checkpointer = _cm.__enter__()
-graph = build_graph(checkpointer=checkpointer)
+_graph = None
+
+
+def get_graph():
+    """
+    The compiled graph, built on first use.
+
+    Lazy rather than built at import time so that `app.py` can import these
+    handlers and inject its own graph. Building one here on import would give
+    the deployed app two graphs on two separate SQLite files — the browser UI
+    and Google Chat would then each hold half of every conversation, and a
+    booking started in one could never be finished in the other.
+    """
+    global _graph
+    if _graph is None:
+        # SQLite rather than in-memory so a server restart doesn't lose a
+        # half-finished booking that's paused waiting on an answer.
+        cm = SqliteSaver.from_conn_string(str(DB_PATH))
+        _graph = build_graph(checkpointer=cm.__enter__())
+    return _graph
+
+
+def set_graph(graph) -> None:
+    """Share an already-built graph (used by app.py in production)."""
+    global _graph
+    _graph = graph
 
 
 @app.get("/")
@@ -79,16 +100,16 @@ async def chat(
         )
 
     try:
-        snapshot = graph.get_state(cfg)
+        snapshot = get_graph().get_state(cfg)
 
         if snapshot.next:
             # Paused at an interrupt. Resume values are plain text — an image
             # here would be a new job, not an answer, so it starts a new turn.
             resume_value = message if not isinstance(payload, HumanMessage) else message
-            result = graph.invoke(Command(resume=resume_value), cfg)
+            result = get_graph().invoke(Command(resume=resume_value), cfg)
         else:
             msg = payload if isinstance(payload, HumanMessage) else HumanMessage(content=message)
-            result = graph.invoke({"messages": [msg]}, cfg)
+            result = get_graph().invoke({"messages": [msg]}, cfg)
 
     except Exception as exc:
         logger.exception("Graph invocation failed")
@@ -151,7 +172,7 @@ async def chat_stream(
     def run():
         yield event("start", {"thread_id": thread_id})
         try:
-            snapshot = graph.get_state(cfg)
+            snapshot = get_graph().get_state(cfg)
             if snapshot.next:
                 graph_input = Command(resume=message)
             else:
@@ -159,7 +180,7 @@ async def chat_stream(
                 graph_input = {"messages": [msg]}
 
             final: dict = {}
-            for mode, chunk in graph.stream(
+            for mode, chunk in get_graph().stream(
                 graph_input, cfg, stream_mode=["custom", "values"]
             ):
                 if mode == "custom" and isinstance(chunk, dict):
@@ -168,7 +189,7 @@ async def chat_stream(
                 elif mode == "values":
                     final = chunk
 
-            state = graph.get_state(cfg)
+            state = get_graph().get_state(cfg)
             if state.tasks and (interrupts := [t for t in state.tasks if t.interrupts]):
                 value = interrupts[0].interrupts[0].value
                 yield event("done", {

@@ -47,6 +47,52 @@ def maps_api_key() -> str:
     return os.getenv("GOOGLE_MAPS_API_KEY", "")
 
 
+# ── Google Chat ────────────────────────────────────────────────────────────────
+
+#: Google Chat signs every webhook request with a JWT from this service account.
+#: A request whose token is issued by anyone else is not from Google Chat.
+CHAT_ISSUER = "chat@system.gserviceaccount.com"
+
+CHAT_SCOPES = ["https://www.googleapis.com/auth/chat.bot"]
+
+
+def chat_credentials_b64() -> str:
+    """
+    Service account for posting messages back to Chat.
+
+    Falls back to the Calendar service account, which is correct when the same
+    account is configured as the Chat app's identity. Kept separable because
+    the Chat app may well end up on a different Google Cloud project.
+    """
+    return os.getenv("GOOGLE_CHAT_CREDENTIALS_B64", "") or google_credentials_b64()
+
+
+def chat_audience() -> str:
+    """
+    Expected `aud` claim on incoming webhook JWTs. Must match what's set in the
+    Chat API console:
+      - "App URL" audience    -> the full https URL of the webhook endpoint
+      - "Project Number"      -> the Google Cloud project number
+    """
+    return os.getenv("GOOGLE_CHAT_AUDIENCE", "").strip()
+
+
+def chat_audience_is_project_number() -> bool:
+    """Project numbers are all digits; endpoint URLs are not."""
+    return chat_audience().isdigit()
+
+
+def chat_verify_requests() -> bool:
+    """
+    Verify the Google-issued JWT on every webhook call.
+
+    Defaults to True, and a missing or malformed value must never mean "skip
+    verification" — an unverified webhook lets anyone on the internet book real
+    jobs. Only set this false for local testing against a fake payload.
+    """
+    return os.getenv("CHAT_VERIFY_REQUESTS", "true").strip().lower() not in ("false", "0", "no")
+
+
 # ── Business ───────────────────────────────────────────────────────────────────
 
 TIMEZONE = "America/Los_Angeles"
@@ -83,6 +129,18 @@ def dry_run() -> bool:
     Defaults to True. A missing or malformed value must never mean "go live".
     """
     return os.getenv("DRY_RUN", "true").strip().lower() not in ("false", "0", "no")
+
+
+def web_ui_token() -> str:
+    """
+    Shared secret gating the browser UI when it is exposed publicly.
+
+    The local dev server (`python server.py`) binds to localhost and needs no
+    token. The deployed app (app.py) refuses to serve the UI at all unless this
+    is set, because an unauthenticated page on a public URL would let anyone
+    who finds it book real jobs and text real customers.
+    """
+    return os.getenv("WEB_UI_TOKEN", "").strip()
 
 
 # ── Models ─────────────────────────────────────────────────────────────────────
