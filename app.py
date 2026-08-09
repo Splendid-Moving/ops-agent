@@ -119,6 +119,7 @@ def status():
             "traffic": google_chat.traffic(),
             "last_rejection": google_chat.last_rejection(),
             "last_unknown_event": google_chat.last_unknown_event(),
+            "last_error": google_chat.last_error(),
         },
     }
 

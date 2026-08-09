@@ -84,11 +84,56 @@ _last_request_at: str | None = None
 _started_at: str | None = None
 
 
+#: How long recent runs took, and anything that blew up.
+#:
+#: Chat abandons a webhook at 30 seconds and shows "unable to process your
+#: request" — the SAME message it shows for a crash. Timing is the only way to
+#: tell them apart, and it matters enormously: a crash did nothing, while a
+#: timeout means the booking went through and the user was told it failed.
+_recent_runs: list[dict] = []
+_last_error: dict | None = None
+
+#: Chat's hard deadline. A run that gets near it has already lost the race.
+CHAT_DEADLINE_SECONDS = 30
+
+
+def _record_run(kind: str, seconds: float) -> None:
+    _recent_runs.append({
+        "kind": kind,
+        "seconds": round(seconds, 1),
+        "over_deadline": seconds >= CHAT_DEADLINE_SECONDS,
+    })
+    del _recent_runs[:-10]
+    if seconds >= CHAT_DEADLINE_SECONDS:
+        logger.error(
+            "Run took %.1fs — past Chat's %ss deadline. The user saw an error, "
+            "but this work COMPLETED.", seconds, CHAT_DEADLINE_SECONDS,
+        )
+
+
+def _record_error(exc: Exception) -> None:
+    global _last_error
+    import traceback
+    from datetime import datetime, timezone
+
+    _last_error = {
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "error": f"{type(exc).__name__}: {exc}",
+        "where": traceback.format_exc().strip().splitlines()[-3:],
+    }
+    logger.exception("Webhook failed")
+
+
+def last_error() -> dict | None:
+    return _last_error
+
+
 def traffic() -> dict:
     return {
         "requests_seen": _requests_seen,
         "last_request_at": _last_request_at,
         "process_started_at": _started_at,
+        "recent_runs": _recent_runs,
     }
 
 
@@ -836,12 +881,24 @@ async def google_chat_webhook(request: Request):
                 )
 
         if addon:
-            # Add-ons must answer inline: the app's identity belongs to
-            # Google's add-on service account, not to the service account we
-            # hold, so posting asynchronously through the Chat API is not
-            # available to us here. Chat's 30-second deadline therefore applies
-            # to the whole run — see the note in the module docstring.
-            text, card = run_graph(event, decision)
+            # Add-ons must answer inline, so Chat's 30-second deadline applies
+            # to the whole run. Timing is recorded because exceeding it looks
+            # identical to a crash from the user's side, while meaning the
+            # opposite: the work completed.
+            started = time.monotonic()
+            try:
+                text, card = run_graph(event, decision)
+            except Exception as exc:
+                _record_error(exc)
+                return reply(
+                    "Something went wrong and I could not finish.\n\n"
+                    f"`{type(exc).__name__}: {exc}`\n\n"
+                    "Check GoHighLevel and the calendar before retrying — part "
+                    "of this may already have gone through."
+                )
+            finally:
+                _record_run("approval" if decision else "message",
+                            time.monotonic() - started)
             return reply(text, card)
 
         _spawn(process_event, event, decision)
