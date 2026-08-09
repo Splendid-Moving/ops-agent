@@ -33,17 +33,34 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+#: Module-level so the connection is never garbage collected. See below.
+_checkpoint_conn = None
+
+
 def _checkpointer():
     """
     Interrupts cannot work without a checkpointer, and a half-finished booking
     must survive a restart — Railway restarts on every deploy.
 
-    SQLite on the container's local disk is the pragmatic choice for one
-    instance at this volume. It does NOT survive a redeploy unless a Railway
-    volume is mounted at the path, and it does not work across multiple
-    instances. Both are noted in the README as the trigger for moving to
-    Postgres.
+    The connection is opened directly and held in a module global rather than
+    via `SqliteSaver.from_conn_string(...).__enter__()`. That helper returns a
+    context manager, and if the only reference to it is a local variable, it is
+    garbage collected as soon as this function returns — which closes the
+    database underneath a perfectly live checkpointer. The failure surfaces
+    much later, on the first message, as "Cannot operate on a closed database".
+
+    `check_same_thread=False` is required because requests are served from a
+    thread pool, so the connection is used from whichever thread handles the
+    call. `timeout` makes concurrent writes wait rather than immediately
+    raising "database is locked".
+
+    SQLite on a mounted volume is the pragmatic choice for one instance at this
+    volume of work. It does not work across multiple instances — see the
+    numReplicas note in railway.json.
     """
+    global _checkpoint_conn
+    import sqlite3
+
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     path = os.getenv("CHECKPOINT_DB", "/data/agent_threads.sqlite")
@@ -56,8 +73,10 @@ def _checkpointer():
             logger.warning("Could not use CHECKPOINT_DB directory; falling back to %s", path)
 
     logger.info("Checkpoints: %s", path)
-    manager = SqliteSaver.from_conn_string(path)
-    return manager.__enter__()
+    _checkpoint_conn = sqlite3.connect(path, check_same_thread=False, timeout=30)
+    saver = SqliteSaver(_checkpoint_conn)
+    saver.setup()
+    return saver
 
 
 app = FastAPI(title="Splendid Moving ops agent")

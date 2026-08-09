@@ -16,6 +16,7 @@ This is a dev tool. It has no auth and binds to localhost only.
 import base64
 import json
 import logging
+import sqlite3
 import uuid
 from pathlib import Path
 
@@ -37,6 +38,7 @@ DB_PATH = Path(__file__).parent / ".agent_threads.sqlite"
 app = FastAPI(title="Splendid Moving ops agent")
 
 _graph = None
+_conn = None
 
 
 def get_graph():
@@ -49,12 +51,19 @@ def get_graph():
     and Google Chat would then each hold half of every conversation, and a
     booking started in one could never be finished in the other.
     """
-    global _graph
+    global _graph, _conn
     if _graph is None:
         # SQLite rather than in-memory so a server restart doesn't lose a
         # half-finished booking that's paused waiting on an answer.
-        cm = SqliteSaver.from_conn_string(str(DB_PATH))
-        _graph = build_graph(checkpointer=cm.__enter__())
+        #
+        # The connection is held in a module global deliberately: a local
+        # reference gets garbage collected when this function returns, closing
+        # the database under a live checkpointer. check_same_thread=False is
+        # needed because requests are served from a thread pool.
+        _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30)
+        checkpointer = SqliteSaver(_conn)
+        checkpointer.setup()
+        _graph = build_graph(checkpointer=checkpointer)
     return _graph
 
 
