@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Splendid Moving — Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:#faf9f7;  --surface:#fff;   --ink:#191917;  --muted:#78766f;
+    --faint:#a8a59c;  --line:#e7e4dd;   --line-soft:#f0ede7;
+    --accent:#1f6d4d; --accent-soft:#eef5f1;
+    --warn:#9a6b12;   --warn-soft:#fdf5e6;
+    --danger:#b4412f; --danger-soft:#fdefec;
+    --radius:14px;
+    --shadow:0 1px 2px rgba(25,25,23,.04), 0 8px 24px -12px rgba(25,25,23,.10);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; }
+  body {
+    background:var(--paper); color:var(--ink);
+    font-family:"Instrument Sans", ui-sans-serif, sans-serif;
+    font-size:15.5px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    display:flex; flex-direction:column;
+    /* subtle paper grain — depth without noise */
+    background-image:radial-gradient(circle at 1px 1px, rgba(25,25,23,.018) 1px, transparent 0);
+    background-size:22px 22px;
+  }
+
+  /* ── header ─────────────────────────────────────────────── */
+  header {
+    position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; gap:12px;
+    padding:14px clamp(16px,4vw,28px);
+    background:rgba(250,249,247,.82); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line-soft);
+  }
+  .mark {
+    width:26px; height:26px; border-radius:7px; flex:none;
+    background:var(--ink); color:var(--paper);
+    display:grid; place-items:center;
+    font-size:13px; font-weight:700; letter-spacing:-.02em;
+  }
+  .title { font-weight:600; letter-spacing:-.015em; font-size:15px; }
+  .title span { color:var(--faint); font-weight:400; }
+  .grow { flex:1; }
+  .badge {
+    font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+    padding:4px 10px; border-radius:99px; border:1px solid transparent;
+  }
+  .badge.dry  { background:var(--accent-soft); color:var(--accent); border-color:#d6e7de; }
+  .badge.live { background:var(--danger-soft); color:var(--danger); border-color:#f4d3cc; }
+  .badge.live::before {
+    content:""; display:inline-block; width:6px; height:6px; border-radius:99px;
+    background:var(--danger); margin-right:6px; vertical-align:1px;
+    animation:pulse 1.9s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.25} }
+  .ghost {
+    font:inherit; font-size:13.5px; color:var(--muted); cursor:pointer;
+    background:none; border:1px solid var(--line); border-radius:9px; padding:6px 12px;
+    transition:.16s ease;
+  }
+  .ghost:hover { color:var(--ink); border-color:var(--faint); background:var(--surface); }
+
+  /* ── conversation ───────────────────────────────────────── */
+  #scroll { flex:1; overflow-y:auto; scroll-behavior:smooth; }
+  #thread { max-width:720px; margin:0 auto; padding:34px clamp(16px,4vw,28px) 20px; }
+
+  .turn { margin-bottom:26px; animation:rise .34s cubic-bezier(.22,.9,.3,1) both; }
+  @keyframes rise { from{opacity:0; transform:translateY(7px)} to{opacity:1; transform:none} }
+
+  .turn.you { display:flex; justify-content:flex-end; }
+  .turn.you .bubble {
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--radius) var(--radius) 4px var(--radius);
+    padding:11px 15px; max-width:82%; box-shadow:var(--shadow);
+  }
+  .turn.you img { max-width:230px; border-radius:9px; margin-top:9px; display:block; }
+
+  .turn.agent { display:flex; gap:13px; }
+  .avatar {
+    width:26px; height:26px; border-radius:7px; flex:none; margin-top:2px;
+    background:var(--accent-soft); border:1px solid #d6e7de;
+    display:grid; place-items:center; font-size:12px;
+  }
+  .said { flex:1; min-width:0; word-break:break-word; }
+  /* Paused prompts keep their hand-made alignment; rendered answers do not. */
+  .turn.paused .body { white-space:pre-wrap; }
+
+  .body > *:first-child { margin-top:0; }
+  .body > *:last-child  { margin-bottom:0; }
+  .body p { margin:0 0 10px; }
+  .body strong { font-weight:600; color:var(--ink); }
+  .body em { font-style:italic; }
+  .body h3, .body h4, .body h5 {
+    font-size:15.5px; font-weight:600; letter-spacing:-.012em;
+    margin:18px 0 7px;
+  }
+  .body ul, .body ol { margin:0 0 11px; padding-left:20px; }
+  .body li { margin:3px 0; padding-left:2px; }
+  .body li::marker { color:var(--faint); }
+  .body ol { list-style:decimal; }
+  .body ul { list-style:none; }
+  .body ul > li { position:relative; }
+  .body ul > li::before {
+    content:""; position:absolute; left:-13px; top:.65em;
+    width:4px; height:4px; border-radius:99px; background:var(--faint);
+  }
+  .body code {
+    font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:.87em;
+    background:var(--line-soft); border:1px solid var(--line);
+    padding:1px 5px; border-radius:5px;
+  }
+  .body a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
+  .body a:hover { text-decoration-thickness:2px; }
+
+  .turn.paused .said {
+    background:var(--warn-soft); border:1px solid #f0e2c4;
+    border-radius:var(--radius); padding:13px 16px;
+  }
+  .turn.paused .avatar { background:var(--warn-soft); border-color:#f0e2c4; }
+
+  /* ── activity ───────────────────────────────────────────── */
+  .activity { margin:0 0 10px; font-size:13.5px; }
+  .activity summary {
+    list-style:none; cursor:pointer; display:inline-flex; align-items:center; gap:8px;
+    color:var(--muted); padding:3px 0; user-select:none;
+  }
+  .activity summary::-webkit-details-marker { display:none; }
+  .activity summary:hover { color:var(--ink); }
+  .caret { transition:transform .2s ease; font-size:9px; color:var(--faint); }
+  .activity[open] .caret { transform:rotate(90deg); }
+  .steps {
+    margin-top:9px; padding-left:5px;
+    border-left:1.5px solid var(--line);
+    display:flex; flex-direction:column; gap:2px;
+  }
+  .step {
+    display:flex; align-items:flex-start; gap:9px; padding:3px 0 3px 12px;
+    color:var(--muted); animation:rise .26s ease both;
+  }
+  .step .dot {
+    width:5px; height:5px; border-radius:99px; flex:none; margin-top:8px;
+    background:var(--faint);
+  }
+  .step.working .dot { background:var(--accent); animation:pulse 1.3s ease-in-out infinite; }
+  .step.done    .dot { background:var(--accent); }
+  .step.warn    .dot { background:var(--warn); }
+  .step.error   .dot { background:var(--danger); }
+  .step.working { color:var(--ink); }
+  .step.error   { color:var(--danger); }
+  .step .detail {
+    display:block; font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:11.5px; color:var(--faint); margin-top:2px; word-break:break-word;
+  }
+
+  .thinking { display:inline-flex; gap:4px; align-items:center; height:22px; }
+  .thinking i {
+    width:5px; height:5px; border-radius:99px; background:var(--faint);
+    animation:bounce 1.25s ease-in-out infinite;
+  }
+  .thinking i:nth-child(2){ animation-delay:.16s }
+  .thinking i:nth-child(3){ animation-delay:.32s }
+  @keyframes bounce { 0%,80%,100%{opacity:.25; transform:translateY(0)} 40%{opacity:1; transform:translateY(-3px)} }
+
+  /* ── empty state ────────────────────────────────────────── */
+  .welcome { padding:8vh 0 0; text-align:center; }
+  .welcome h2 {
+    font-size:clamp(21px,4.4vw,27px); font-weight:600; letter-spacing:-.03em;
+    margin-bottom:9px;
+  }
+  .welcome p { color:var(--muted); margin-bottom:26px; }
+  .chips { display:flex; flex-wrap:wrap; gap:9px; justify-content:center; }
+  .chip {
+    font:inherit; font-size:13.5px; cursor:pointer; text-align:left;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:99px; padding:8px 15px; color:var(--muted);
+    transition:.16s ease;
+  }
+  .chip:hover { color:var(--ink); border-color:var(--faint); transform:translateY(-1px); box-shadow:var(--shadow); }
+
+  /* ── composer ───────────────────────────────────────────── */
+  footer {
+    position:sticky; bottom:0;
+    background:linear-gradient(to top, var(--paper) 62%, rgba(250,249,247,0));
+    padding:14px clamp(16px,4vw,28px) calc(18px + env(safe-area-inset-bottom));
+  }
+  .composer { max-width:720px; margin:0 auto; }
+  .attached {
+    display:none; align-items:center; gap:10px; margin-bottom:9px;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:11px; padding:8px 11px; box-shadow:var(--shadow);
+  }
+  .attached img { width:38px; height:38px; object-fit:cover; border-radius:7px; }
+  .attached span { font-size:13px; color:var(--muted); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .box {
+    display:flex; align-items:flex-end; gap:8px;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--radius); padding:7px 7px 7px 13px;
+    box-shadow:var(--shadow); transition:border-color .16s ease;
+  }
+  .box:focus-within { border-color:var(--faint); }
+  textarea {
+    flex:1; border:none; outline:none; resize:none; background:none;
+    font:inherit; color:var(--ink); padding:8px 0; max-height:170px; min-height:24px;
+  }
+  textarea::placeholder { color:var(--faint); }
+  .icon {
+    width:34px; height:34px; flex:none; border-radius:9px; cursor:pointer;
+    border:none; background:none; color:var(--faint);
+    display:grid; place-items:center; transition:.16s ease;
+  }
+  .icon:hover { background:var(--line-soft); color:var(--ink); }
+  .icon.send { background:var(--ink); color:var(--paper); }
+  .icon.send:hover { background:#000; }
+  .icon.send:disabled { background:var(--line); color:var(--faint); cursor:default; }
+  .hint {
+    text-align:center; font-size:11.5px; color:var(--faint);
+    margin-top:9px; letter-spacing:.01em;
+  }
+
+  body.dragging::after {
+    content:"Drop the screenshot"; position:fixed; inset:11px; z-index:60;
+    border:1.5px dashed var(--accent); border-radius:18px;
+    background:rgba(31,109,77,.05); color:var(--accent);
+    display:grid; place-items:center; font-size:16px; font-weight:600;
+    backdrop-filter:blur(2px);
+  }
+
+  @media (max-width:640px) {
+    .turn.you .bubble { max-width:88%; }
+    .welcome { padding:5vh 0 0; }
+    .chips { flex-direction:column; align-items:stretch; }
+    .chip { text-align:center; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="mark">S</div>
+  <div class="title">Splendid Moving <span>· Ops</span></div>
+  <div class="grow"></div>
+  <span id="mode" class="badge dry">…</span>
+  <button class="ghost" id="reset">New chat</button>
+</header>
+
+<div id="scroll"><div id="thread">
+  <div class="welcome" id="welcome">
+    <h2>What do you need?</h2>
+    <p>Ask about jobs, or drop a customer screenshot to book one.</p>
+    <div class="chips">
+      <button class="chip" data-q="How many jobs did we have last month?">How many jobs last month?</button>
+      <button class="chip" data-q="What's on the calendar tomorrow?">What's on tomorrow?</button>
+      <button class="chip" data-q="What were our busiest days last month?">Busiest days last month</button>
+    </div>
+  </div>
+</div></div>
+
+<footer>
+  <div class="composer">
+    <div class="attached" id="attached">
+      <img id="thumb" alt="">
+      <span id="fname"></span>
+      <button class="icon" id="unattach" title="Remove">✕</button>
+    </div>
+    <div class="box">
+      <textarea id="input" rows="1" placeholder="Message, or paste a screenshot…"></textarea>
+      <button class="icon" id="attach" title="Attach screenshot">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <button class="icon send" id="send" title="Send">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </div>
+    <div class="hint" id="hint">Enter to send · Shift+Enter for a new line</div>
+  </div>
+  <input type="file" id="file" accept="image/*" hidden>
+</footer>
+
+<script>
+/* ── markdown ────────────────────────────────────────────
+   A deliberately small renderer for the subset models actually emit: bold,
+   italic, inline code, links, headings, bullet and numbered lists. No library,
+   because pulling one in for six rules is not worth the weight — and because
+   escaping first, then rendering, keeps model output from ever becoming live
+   HTML in this page.                                                        */
+function md(src) {
+  const esc = s => s.replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+  const inline = s => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+    .replace(/(^|[\s(])_([^_\n]+)_/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+             '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|\s)(https?:\/\/[^\s<]+)/g,
+             '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+
+  const lines = src.split('\n').map(l => l.replace(/\s+$/, ''));
+  const isItem = l => /^\s*([-*•]|\d+[.)])\s+/.test(l);
+
+  const out = [];
+  // Each open list also tracks whether its current <li> is still open, so an
+  // indented sub-list can be placed INSIDE that item rather than beside it.
+  const stack = [];                     // [{ tag, indent, liOpen }]
+
+  const closeItem = () => {
+    const top = stack[stack.length - 1];
+    if (top?.liOpen) { out.push('</li>'); top.liOpen = false; }
+  };
+  const popList = () => { closeItem(); out.push(`</${stack.pop().tag}>`); closeItem(); };
+  const closeAll = () => { while (stack.length) popList(); };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (!line.trim()) {
+      // A blank line between list items is just spacing. Closing the list here
+      // would restart an ordered list's numbering at 1 — which is how a list
+      // of four jobs came out numbered 1, 1, 1, 1.
+      const next = lines.slice(i + 1).find(l => l.trim());
+      if (!(stack.length && next && isItem(next))) closeAll();
+      continue;
+    }
+
+    const indent = line.match(/^\s*/)[0].replace(/\t/g, '  ').length;
+
+    let m;
+    if ((m = line.match(/^\s*(#{1,4})\s+(.*)$/))) {
+      closeAll();
+      const lvl = Math.min(m[1].length + 2, 6);
+      out.push(`<h${lvl}>${inline(m[2])}</h${lvl}>`);
+      continue;
+    }
+
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+
+    if (bullet || numbered) {
+      const tag = bullet ? 'ul' : 'ol';
+      const text = (bullet || numbered)[1];
+
+      while (stack.length > 1 && indent < stack[stack.length - 1].indent) popList();
+
+      const top = stack[stack.length - 1];
+      if (!top) {
+        stack.push({ tag, indent, liOpen: false });
+        out.push(`<${tag}>`);
+      } else if (indent > top.indent) {
+        // Nest inside the item above, leaving its <li> open.
+        stack.push({ tag, indent, liOpen: false });
+        out.push(`<${tag}>`);
+      } else {
+        closeItem();
+        if (top.tag !== tag) {
+          out.push(`</${stack.pop().tag}>`);
+          stack.push({ tag, indent, liOpen: false });
+          out.push(`<${tag}>`);
+        }
+      }
+      out.push(`<li>${inline(text)}`);
+      stack[stack.length - 1].liOpen = true;
+    } else if (stack.length) {
+      out.push(`<br>${inline(line.trim())}`);
+    } else {
+      out.push(`<p>${inline(line)}</p>`);
+    }
+  }
+  closeAll();
+  return out.join('');
+}
+
+const $ = s => document.querySelector(s);
+const thread = $('#thread'), scroll = $('#scroll'), input = $('#input');
+let threadId = '', pending = null, busy = false;
+
+/* ── mode badge ─────────────────────────────────────────── */
+fetch('/api/status').then(r => r.json()).then(s => {
+  const el = $('#mode');
+  el.textContent = s.dry_run ? 'dry run' : 'live';
+  el.className = 'badge ' + (s.dry_run ? 'dry' : 'live');
+  el.title = s.dry_run
+    ? 'Nothing is actually created.'
+    : 'Real contacts, real invoices, real emails.';
+  if (!s.dry_run) $('#hint').textContent = 'Live — anything you approve is real';
+});
+
+/* ── rendering ──────────────────────────────────────────── */
+const atBottom = () => scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120;
+const toBottom = () => scroll.scrollTop = scroll.scrollHeight;
+
+function clearWelcome() { $('#welcome')?.remove(); }
+
+function addYou(text, imgUrl) {
+  clearWelcome();
+  const el = document.createElement('div');
+  el.className = 'turn you';
+  const b = document.createElement('div');
+  b.className = 'bubble';
+  if (text) b.textContent = text;
+  if (imgUrl) { const i = new Image(); i.src = imgUrl; b.appendChild(i); }
+  el.appendChild(b);
+  thread.appendChild(el);
+  toBottom();
+}
+
+function addAgent() {
+  clearWelcome();
+  const el = document.createElement('div');
+  el.className = 'turn agent';
+  el.innerHTML = `
+    <div class="avatar">◆</div>
+    <div class="said">
+      <details class="activity" open hidden>
+        <summary><span class="caret">▶</span><span class="label">Working…</span></summary>
+        <div class="steps"></div>
+      </details>
+      <div class="body"><span class="thinking"><i></i><i></i><i></i></span></div>
+    </div>`;
+  thread.appendChild(el);
+  toBottom();
+  return {
+    root: el,
+    activity: el.querySelector('.activity'),
+    label: el.querySelector('.label'),
+    steps: el.querySelector('.steps'),
+    body: el.querySelector('.body'),
+  };
+}
+
+function addStep(ui, ev) {
+  ui.activity.hidden = false;
+  // A step that was "working" is settled by the next event.
+  ui.steps.querySelectorAll('.step.working').forEach(s => {
+    s.classList.remove('working'); s.classList.add('done');
+  });
+  const row = document.createElement('div');
+  row.className = 'step ' + ev.status;
+  row.innerHTML = `<span class="dot"></span><span></span>`;
+  row.children[1].textContent = ev.text;
+  if (ev.detail) {
+    const d = document.createElement('span');
+    d.className = 'detail'; d.textContent = ev.detail;
+    row.children[1].appendChild(d);
+  }
+  ui.steps.appendChild(row);
+  ui.label.textContent = ev.text;
+  if (atBottom()) toBottom();
+}
+
+function finish(ui, data) {
+  ui.steps.querySelectorAll('.step.working').forEach(s => {
+    s.classList.remove('working'); s.classList.add('done');
+  });
+  const n = ui.steps.children.length;
+  if (n) {
+    ui.label.textContent = n === 1 ? '1 step' : `${n} steps`;
+    ui.activity.open = false;              // collapse once the answer lands
+  } else {
+    ui.activity.hidden = true;
+  }
+  // Interrupt prompts are hand-formatted plain text (aligned summaries,
+  // bullets) — running them through markdown would mangle the alignment.
+  if (data.paused) {
+    ui.body.textContent = data.reply;
+    ui.root.classList.add('paused');
+  } else {
+    ui.body.innerHTML = md(data.reply);
+  }
+  toBottom();
+}
+
+/* ── attachments ────────────────────────────────────────── */
+function attach(f) {
+  if (!f || !f.type.startsWith('image/')) return;
+  pending = f;
+  $('#thumb').src = URL.createObjectURL(f);
+  $('#fname').textContent = f.name || 'screenshot';
+  $('#attached').style.display = 'flex';
+}
+function detach() {
+  pending = null; $('#attached').style.display = 'none'; $('#file').value = '';
+}
+$('#attach').onclick = () => $('#file').click();
+$('#file').onchange = e => attach(e.target.files[0]);
+$('#unattach').onclick = detach;
+
+document.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragging'); });
+document.addEventListener('drop', e => {
+  e.preventDefault(); document.body.classList.remove('dragging');
+  attach(e.dataTransfer.files[0]);
+});
+document.addEventListener('paste', e => {
+  for (const it of e.clipboardData.items)
+    if (it.type.startsWith('image/')) attach(it.getAsFile());
+});
+
+/* ── composer ───────────────────────────────────────────── */
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 170) + 'px';
+});
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+$('#send').onclick = () => send();
+document.addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if (chip) send(chip.dataset.q);
+});
+$('#reset').onclick = async () => {
+  threadId = (await (await fetch('/api/reset', { method:'POST' })).json()).thread_id;
+  thread.innerHTML = `
+    <div class="welcome" id="welcome">
+      <h2>What do you need?</h2>
+      <p>Ask about jobs, or drop a customer screenshot to book one.</p>
+      <div class="chips">
+        <button class="chip" data-q="How many jobs did we have last month?">How many jobs last month?</button>
+        <button class="chip" data-q="What's on the calendar tomorrow?">What's on tomorrow?</button>
+        <button class="chip" data-q="What were our busiest days last month?">Busiest days last month</button>
+      </div>
+    </div>`;
+  detach();
+};
+
+/* ── send + stream ──────────────────────────────────────── */
+async function send(preset) {
+  const text = (preset ?? input.value).trim();
+  if ((!text && !pending) || busy) return;
+
+  addYou(text, pending ? URL.createObjectURL(pending) : null);
+
+  const fd = new FormData();
+  fd.append('message', text);
+  fd.append('thread_id', threadId);
+  if (pending) fd.append('image', pending);
+
+  if (!preset) { input.value = ''; input.style.height = 'auto'; }
+  detach();
+  busy = true; $('#send').disabled = true;
+  const ui = addAgent();
+
+  try {
+    const res = await fetch('/api/chat/stream', { method:'POST', body: fd });
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream:true });
+      const parts = buf.split('\n\n');
+      buf = parts.pop();
+      for (const part of parts) {
+        const line = part.split('\n').find(l => l.startsWith('data: '));
+        if (!line) continue;
+        const data = JSON.parse(line.slice(6));
+        if (data.event === 'start') threadId = data.thread_id;
+        else if (data.event === 'progress') addStep(ui, data);
+        else if (data.event === 'done') finish(ui, data);
+      }
+    }
+  } catch (err) {
+    ui.body.textContent = 'Connection failed: ' + err.message;
+  } finally {
+    busy = false; $('#send').disabled = false; input.focus();
+  }
+}
+
+input.focus();
+</script>
+</body>
+</html>

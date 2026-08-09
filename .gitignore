@@ -1,0 +1,23 @@
+.env
+.env.local
+service_account.json
+*.pem
+*.key
+
+# Conversation checkpoints — contains real customer data from live bookings.
+.agent_threads.sqlite
+.agent_threads.sqlite-shm
+.agent_threads.sqlite-wal
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.langgraph_api/
+*.egg-info/
+dist/
+build/
+
+.DS_Store
+logs/
+*.log
