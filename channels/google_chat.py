@@ -115,9 +115,49 @@ def verify_request(authorization: str | None) -> bool:
         claims = google_id_token.verify_oauth2_token(token, request, audience)
         return claims.get("email") == config.CHAT_ISSUER
 
-    except Exception:
-        logger.warning("Chat token verification failed", exc_info=True)
+    except Exception as exc:
+        _log_why_verification_failed(token, audience, exc)
         return False
+
+
+def _log_why_verification_failed(token: str, expected_audience: str, exc: Exception) -> None:
+    """
+    Say precisely why a token was rejected.
+
+    A bare 401 is close to useless here: the audience is configured in two
+    places that must agree exactly (the Chat API console and this app's env),
+    and a mismatch looks identical to a forged token. Decoding the claims
+    without verifying grants nothing — the request is already rejected — but it
+    turns "not responding" into a one-line diagnosis.
+    """
+    try:
+        from google.auth import jwt
+
+        claims = jwt.decode(token, verify=False)
+    except Exception:
+        logger.warning(
+            "Chat token rejected: not a readable JWT (%s: %s)",
+            type(exc).__name__, exc,
+        )
+        return
+
+    actual = claims.get("aud")
+    issuer = claims.get("iss") or claims.get("email")
+
+    if actual != expected_audience:
+        logger.error(
+            "Chat token rejected: AUDIENCE MISMATCH\n"
+            "  token says : %r\n"
+            "  we expect  : %r\n"
+            "  -> set GOOGLE_CHAT_AUDIENCE to the token's value, "
+            "or change Authentication Audience in the Chat API console to match.",
+            actual, expected_audience,
+        )
+    else:
+        logger.error(
+            "Chat token rejected despite matching audience %r (issuer=%r): %s: %s",
+            actual, issuer, type(exc).__name__, exc,
+        )
 
 
 # ── Chat API client ────────────────────────────────────────────────────────────
