@@ -64,6 +64,41 @@ def test_unthreaded_space_keys_on_the_space_not_the_message_thread():
     assert gc.thread_id_for(first) == "gchat:spaces/AAA"
 
 
+def test_dm_is_one_conversation_even_when_chat_reports_it_as_threaded():
+    """
+    The bug that lost a screenshot's worth of data.
+
+    Sending a fresh message rather than replying inside a thread starts a NEW
+    thread, even in a DM. Keying on the thread meant the second message never
+    found the paused booking — the agent answered using only the fields from
+    that message and silently discarded the rest.
+    """
+    first = {
+        "type": "MESSAGE",
+        "space": {"name": "spaces/qxhXFKAAAAE", "spaceType": "DIRECT_MESSAGE",
+                  "spaceThreadingState": "THREADED_MESSAGES"},
+        "message": {"argumentText": "screenshot", "thread": {"name": "spaces/qxhXFKAAAAE/threads/AAA"}},
+    }
+    second = {
+        **first,
+        "message": {"argumentText": "labor only, 4 movers",
+                    "thread": {"name": "spaces/qxhXFKAAAAE/threads/BBB"}},
+    }
+
+    assert gc.thread_id_for(first) == gc.thread_id_for(second)
+    assert gc.thread_id_for(first) == "gchat:spaces/qxhXFKAAAAE"
+
+
+def test_legacy_dm_type_is_recognised_too():
+    event = {
+        "type": "MESSAGE",
+        "space": {"name": "spaces/AAA", "type": "DM",
+                  "spaceThreadingState": "THREADED_MESSAGES"},
+        "message": {"thread": {"name": "spaces/AAA/threads/XYZ"}},
+    }
+    assert gc.thread_id_for(event) == "gchat:spaces/AAA"
+
+
 def test_threaded_space_keys_on_the_thread_so_bookings_stay_separate():
     """In a real threaded space, two threads are two different conversations."""
     one = message_event(threaded=True, thread="spaces/AAA/threads/ONE")

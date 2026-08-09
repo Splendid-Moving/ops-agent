@@ -423,16 +423,27 @@ def thread_id_for(event: dict) -> str:
     "what's the move date?" silently starts a fresh conversation and abandons
     the job in progress.
 
-    Chat's own thread name is only stable in spaces that actually thread. In an
-    unthreaded space — which is what direct messages usually are — each message
-    gets its own thread name, so keying on it would break every multi-turn
-    booking. There, the space itself is the conversation.
+    Chat's thread name is not stable across a conversation. Sending a fresh
+    message — rather than explicitly replying inside an existing thread —
+    starts a NEW thread with a new name, even in a one-to-one chat. Keying on
+    it means the second message never finds the booking the first one started.
+
+    That failure is silent and looks like the agent "forgetting": it answers,
+    but with only the fields from the latest message, having discarded
+    everything read from the screenshot.
+
+    So a direct message is always ONE conversation, keyed on the space,
+    regardless of what threading state Chat reports for it. Only genuine
+    multi-person spaces key on the thread, where separate threads really are
+    separate conversations.
     """
     space = event.get("space") or {}
     space_name = space.get("name", "")
 
-    threaded = space.get("spaceThreadingState") == "THREADED_MESSAGES"
-    if threaded:
+    space_type = space.get("spaceType") or space.get("type") or ""
+    is_dm = space_type.upper() in ("DIRECT_MESSAGE", "DM")
+
+    if not is_dm and space.get("spaceThreadingState") == "THREADED_MESSAGES":
         thread = ((event.get("message") or {}).get("thread") or {}).get("name")
         if thread:
             return f"gchat:{thread}"
@@ -613,6 +624,9 @@ def run_graph(event: dict, decision: str | None = None) -> tuple[str, dict | Non
 
     try:
         paused = _is_paused(thread_id)
+        # Logged every turn: a thread_id that changes between messages is the
+        # one failure that looks like the agent forgetting rather than erroring.
+        logger.info("thread=%s paused=%s", thread_id, paused)
 
         if decision is not None:
             # A button press. Only meaningful against a paused graph; if the
