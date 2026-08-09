@@ -611,6 +611,40 @@ def _pending_interrupt(thread_id: str) -> dict | None:
     return None
 
 
+#: Typed phrases that wipe the conversation and any half-finished booking.
+#:
+#: Needed because the conversation is keyed to the Chat *space*, so deleting
+#: the chat in Google Chat does not clear it — the next message would resume a
+#: booking the user thought was long gone.
+_RESET_WORDS = {
+    "reset", "/reset", "start over", "start again", "clear",
+    "clear chat", "new booking", "cancel booking", "forget it", "nevermind",
+}
+
+
+def is_reset_request(text: str) -> bool:
+    return text.strip().lower().strip(".!") in _RESET_WORDS
+
+
+def reset_thread(thread_id: str) -> bool:
+    """
+    Wipe a conversation, including any booking paused mid-question.
+
+    Nothing already created in GoHighLevel or the calendar is touched — this
+    only clears what the agent remembers.
+    """
+    checkpointer = getattr(_graph, "checkpointer", None)
+    if checkpointer is None:
+        return False
+    try:
+        checkpointer.delete_thread(thread_id)
+        logger.info("Reset conversation %s", thread_id)
+        return True
+    except Exception:
+        logger.exception("Could not reset %s", thread_id)
+        return False
+
+
 def run_graph(event: dict, decision: str | None = None) -> tuple[str, dict | None]:
     """
     Run the graph for one event and return (text, card).
@@ -776,6 +810,17 @@ async def google_chat_webhook(request: Request):
 
     if event_type == "REMOVED_FROM_SPACE":
         return {}
+
+    if event_type == "MESSAGE" and is_reset_request(strip_mention(event)):
+        # Handled before the graph runs: the whole point is to escape a
+        # conversation that may be stuck mid-booking.
+        thread_id = thread_id_for(event)
+        if reset_thread(thread_id):
+            return reply(
+                "Cleared — we're starting fresh. Nothing in GoHighLevel or the "
+                "calendar was changed; I've only forgotten the conversation."
+            )
+        return reply("I couldn't clear that. Try again in a moment.")
 
     if event_type in ("MESSAGE", "CARD_CLICKED"):
         decision = None

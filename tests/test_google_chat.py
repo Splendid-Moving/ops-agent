@@ -277,6 +277,44 @@ def test_addon_added_to_space_is_wrapped(client):
     assert "Splendid Moving" in text
 
 
+# ── resetting a conversation ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "text", ["reset", "/reset", "Start Over", "clear chat", "new booking", "nevermind."]
+)
+def test_reset_phrases_are_recognised(text):
+    assert gc.is_reset_request(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "how many jobs last month",
+        "book this job",
+        # Must not fire on a customer's actual details — "clear" appears in
+        # ordinary sentences, and wiping a booking mid-flow would lose work.
+        "the pickup has a clear path to the door",
+        "reset the arrival window to 10-11am",
+    ],
+)
+def test_ordinary_messages_do_not_reset(text):
+    assert not gc.is_reset_request(text)
+
+
+def test_reset_clears_the_thread_and_says_so(client, monkeypatch):
+    cleared = []
+    monkeypatch.setattr(gc, "reset_thread", lambda tid: cleared.append(tid) or True)
+    monkeypatch.setattr(gc, "run_graph",
+                        lambda e, d=None: pytest.fail("graph must not run on reset"))
+
+    response = client.post("/google-chat", json=addon_message_event("reset"))
+
+    text = response.json()["hostAppDataAction"]["chatDataAction"]["createMessageAction"]["message"]["text"]
+    assert "Cleared" in text
+    assert cleared == ["gchat:spaces/AAA"]
+
+
 # ── the confirm card ──────────────────────────────────────────────────────────
 
 
