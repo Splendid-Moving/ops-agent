@@ -109,3 +109,25 @@ def test_missing_optional_fields_do_not_break_rendering(missing):
 
     assert "BOOKING CONFIRMATION" in body
     assert "None" not in body
+
+
+def test_logo_is_an_absolute_public_url():
+    """
+    A relative path or a file:// URL renders as a broken image in every mail
+    client — and only the customer would ever see it.
+    """
+    assert t.LOGO_URL.startswith("https://")
+    assert t.LOGO_URL in t.html(FULL_MOVE)
+
+
+def test_logo_host_is_overridable_without_a_code_change(monkeypatch):
+    """The Railway domain changes if the service is ever recreated."""
+    import importlib
+
+    monkeypatch.setenv("EMAIL_LOGO_URL", "https://example.com/truck.png")
+    reloaded = importlib.reload(t)
+    try:
+        assert "https://example.com/truck.png" in reloaded.html(FULL_MOVE)
+    finally:
+        monkeypatch.delenv("EMAIL_LOGO_URL")
+        importlib.reload(t)

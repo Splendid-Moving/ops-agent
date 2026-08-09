@@ -92,6 +92,30 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/email-logo.png")
+def email_logo():
+    """
+    The truck logo at the top of every confirmation email.
+
+    Email clients cannot read a local file, so the image needs a public URL.
+    Serving it from this app rather than GoHighLevel's media library keeps it
+    tied to the repo: it deploys with the code, and nobody can break every
+    future confirmation email by tidying up a media library.
+
+    Cached for a year — it changes about never, and customers should not wait
+    on a round trip to see the header.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    return FileResponse(
+        Path(__file__).parent / "static" / "email-logo.png",
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 @app.get("/api/status")
 def status():
     """
@@ -144,7 +168,11 @@ if config.web_ui_token():
     async def require_token(request: Request, call_next):
         """Gate only the UI routes; the Chat webhook has its own JWT check."""
         path = request.url.path
-        if path.startswith(("/health", "/google-chat")):
+        # /email-logo.png MUST stay public: it is fetched by the customer's
+        # email client, which has no token. Gating it would break the header
+        # image in every confirmation email, and only for customers — it would
+        # still look fine to anyone testing while logged in.
+        if path.startswith(("/health", "/google-chat", "/email-logo.png")):
             return await call_next(request)
 
         supplied = (

@@ -29,13 +29,20 @@ PHONE = "(323) 645-2636"
 PHONE_E164 = "+13236452636"
 EMAIL = "info@splendidmoving.com"
 
-#: Hosted on the company site. Email clients cannot render a local file, and
-#: many block images by default — so the email must still read correctly with
-#: the logo missing, which is why nothing but branding lives up there.
-LOGO_URL = os.getenv(
-    "EMAIL_LOGO_URL",
-    "https://splendidmoving.com/assets/images/Brand%20Logo.png",
-)
+#: The truck logo, matching the GoHighLevel confirmation template.
+#:
+#: Served by this app (see /email-logo.png in app.py) rather than linked from
+#: GHL's media library, so it ships with the code and cannot be broken by
+#: someone tidying up media. Email clients cannot read a local file, so it has
+#: to be a public URL either way.
+#:
+#: Many clients block images by default, so the email must still read correctly
+#: without it — which is why nothing but branding lives up there.
+PUBLIC_BASE_URL = os.getenv(
+    "PUBLIC_BASE_URL", "https://ops-agent-production-5261.up.railway.app"
+).rstrip("/")
+
+LOGO_URL = os.getenv("EMAIL_LOGO_URL", f"{PUBLIC_BASE_URL}/email-logo.png")
 
 NAVY = "#0d2149"
 
