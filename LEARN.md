@@ -363,6 +363,33 @@ cause.
 **Lesson:** resources whose lifetime depends on a variable staying alive need
 that variable to actually stay alive.
 
+### The booking that inherited the last one
+
+A finished booking left its customer in `intake` and its four successes in
+`ledger`. Nothing cleared either. The next job in the same conversation
+inherited both.
+
+```python
+merged = {**intake, **(state.get("intake") or {})}
+#                    ^^^^^^^^^^^^^^^^^^^^^^^^^ the old booking wins
+```
+
+The visible half: a brand-new screenshot came back showing the *previous*
+customer, because their values outranked the fresh read. The invisible half was
+worse — every action node checks `if succeeded(ledger, me): return {}`, so all
+four would have skipped, and the agent would have reported a booking it never
+made.
+
+The fix is not "always clear at the end", because `retry` deliberately reuses
+the ledger — that is how it re-runs only the failed steps. So the intake lane
+decides at its front door whether the turn *starts* a job or *continues* one.
+
+**Lesson:** persistence is the feature you are paying for; forgetting is
+something you have to implement. State survives every turn and nodes only ever
+add to it. Anything that should not outlive a task needs code that ends it —
+and "when exactly does this end?" is usually the harder question than "how do I
+clear it?"
+
 ### Assuming one dialect
 
 Google Chat apps registered as *Workspace add-ons* send a different payload
