@@ -75,6 +75,21 @@ def failed_actions(ledger: dict[str, ActionResult]) -> list[str]:
     ]
 
 
+def booking_has_run(ledger: dict[str, ActionResult]) -> bool:
+    """
+    True once any side effect actually executed in this thread.
+
+    Distinguishes "this conversation already booked something" from "this is a
+    fresh conversation". A finished booking leaves its contact id, calendar
+    event and intake behind, and the next job in the same thread must not
+    inherit any of it.
+    """
+    return any(
+        (ledger or {}).get(name, {}).get("status") in ("success", "failed")
+        for name in ALL_ACTIONS
+    )
+
+
 def all_done(ledger: dict[str, ActionResult]) -> bool:
     return all(
         (ledger or {}).get(name, {}).get("status") in ("success", "skipped")

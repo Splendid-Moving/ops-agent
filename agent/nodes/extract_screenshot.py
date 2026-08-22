@@ -20,7 +20,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agent import progress
 from agent.models import get_model
-from agent.state import OpsAgentState
+from agent.state import OpsAgentState, booking_has_run, new_ledger
 from schemas import business_context
 from schemas.intake import MIN_CONFIDENCE, ScreenshotExtraction
 from services import formatting, ocr
@@ -293,6 +293,51 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     return intake, confidence
 
 
+#: Phrases that mean "run the failed steps again", NOT "start a new job".
+#:
+#: A retry deliberately reuses the existing intake and ledger — that is how the
+#: ledger skips the actions that already succeeded. Clearing state on a retry
+#: would re-run all four and double-book the customer.
+_RETRY_WORDS = {"retry", "try again", "run it again", "re-run", "rerun", "resend"}
+
+
+def _is_new_job(state: OpsAgentState, has_image: bool, text: str) -> bool:
+    """
+    Whether this turn starts a fresh booking rather than continuing one.
+
+    A completed booking leaves its customer in `intake` and its successes in
+    `ledger`. Without this check the next job in the same conversation inherits
+    both: the summary shows the previous customer's details, and every action
+    node sees "already succeeded" and skips — so the agent reports a booking it
+    never made.
+
+    A retry is the one case that must NOT reset, since reusing the ledger is
+    exactly what makes it re-run only the failed steps.
+    """
+    if text.strip().lower().strip(".!") in _RETRY_WORDS:
+        return False
+
+    # A screenshot is unambiguous. Nobody pastes an image to continue a booking
+    # that is already underway — that arrives as a resume, not through here.
+    if has_image:
+        return True
+
+    return booking_has_run(state.get("ledger"))
+
+
+def _fresh_start() -> dict:
+    """State reset for a new booking. Everything a previous job could leak."""
+    return {
+        "ledger": new_ledger(),
+        "missing_fields": [],
+        "approved": False,
+        "duplicate_warning": None,
+        "job_fingerprint": "",
+        # NOT field_confidence: every return below sets it explicitly, and
+        # since `reset` is splatted last it would overwrite the real value.
+    }
+
+
 def extract_screenshot(state: OpsAgentState) -> dict:
     messages = state.get("messages", [])
     if not messages:
@@ -302,13 +347,24 @@ def extract_screenshot(state: OpsAgentState) -> dict:
     images = _image_parts(last)
     accompanying = _text_of(last)
 
+    # Decided once, before any extraction: is this a new job or a continuation?
+    # `carried` is what survives from the previous turn — nothing, if new.
+    if _is_new_job(state, bool(images), accompanying):
+        carried: dict = {}
+        reset = _fresh_start()
+        if state.get("intake"):
+            logger.info("New job — discarding the previous booking's intake.")
+    else:
+        carried = dict(state.get("intake") or {})
+        reset = {}
+
     # No image, but the message may still describe the job in prose — staff
     # often type the details instead of pasting a screenshot. Extracting from
     # that text is the same problem with the same schema, so it uses the same
     # prompt; only the evidence differs.
     if not images:
         if not accompanying.strip():
-            return {"intake": dict(state.get("intake") or {}), "field_confidence": {}}
+            return {"intake": carried, "field_confidence": {}, **reset}
 
         progress.working("Reading the job details\u2026")
         logger.info("Intake with no image — extracting from message text.")
@@ -325,13 +381,13 @@ def extract_screenshot(state: OpsAgentState) -> dict:
             ])
         except Exception:
             logger.exception("Text extraction failed")
-            return {"intake": dict(state.get("intake") or {}), "field_confidence": {}}
+            return {"intake": carried, "field_confidence": {}, **reset}
 
         intake, confidence = _to_intake(extraction)
-        merged = {**intake, **(state.get("intake") or {})}
+        merged = {**intake, **carried}
         progress.done(f"Picked up {len(intake)} details")
         logger.info("Extracted %d usable fields from text", len(intake))
-        return {"intake": merged, "field_confidence": confidence}
+        return {"intake": merged, "field_confidence": confidence, **reset}
 
     model = get_model("extract_screenshot").with_structured_output(ScreenshotExtraction)
 
@@ -377,7 +433,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
     progress.done(f"Read {len(intake)} details from the screenshot")
 
     # Anything already confirmed by the user outranks a fresh extraction.
-    merged = {**intake, **(state.get("intake") or {})}
+    merged = {**intake, **carried}
 
     logger.info(
         "Extracted %d usable fields (below threshold: %s)%s",
@@ -385,4 +441,4 @@ def extract_screenshot(state: OpsAgentState) -> dict:
         [k for k, v in confidence.items() if 0 < v < MIN_CONFIDENCE] or "none",
         "" if ocr_text else " [no OCR]",
     )
-    return {"intake": merged, "field_confidence": confidence}
+    return {"intake": merged, "field_confidence": confidence, **reset}
