@@ -1,8 +1,5 @@
 # Understanding the Ops Agent
 
-A guided tour of this codebase, written for someone who wants to build the next
-one. It assumes you can read Python but not that you know LangGraph.
-
 Read it in order. Each part earns the next.
 
 ---

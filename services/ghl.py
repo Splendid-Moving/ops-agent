@@ -333,6 +333,31 @@ def create_invoice(
     return {"invoice_id": invoice.get("_id") or invoice.get("id"), "dry_run": False}
 
 
+#: Who the invoice message is signed by.
+#:
+#: GHL composes the invoice text itself from the account's "Invoice Received"
+#: template — we only hand it an invoice id — and it signs off with the person
+#: named in `sentFrom.fromName`. Omit that object and it falls back to whoever
+#: `userId` points at, which is one staff member's personal name:
+#:
+#:     ... Invoice Link: https://link.fastpaydirect.com/l/… Best, Adilet Almedino
+#:
+#: Customers should hear from the company, not from whichever account happens to
+#: hold the API token. With fromName set, the same send reads:
+#:
+#:     ... Invoice Link: https://link.fastpaydirect.com/l/… Best, Splendid Moving
+#:
+#: Verified against the live API — the send response echoes the composed body,
+#: so this is observed behaviour and not inference from the docs, which describe
+#: sentFrom only as "sender details" and never mention SMS.
+#:
+#: This controls the SIGNATURE ONLY. The wording around it lives in the GHL
+#: template (Payments → Invoices & Estimates → Settings → Notifications), which
+#: no API field can override.
+INVOICE_SENDER_NAME = "Splendid Moving"
+INVOICE_SENDER_EMAIL = "info@splendidmoving.com"
+
+
 def send_invoice(invoice_id: str, action: str = "sms") -> dict[str, Any]:
     """
     Deliver an invoice to the contact. action is 'sms' or 'email'.
@@ -356,6 +381,10 @@ def send_invoice(invoice_id: str, action: str = "sms") -> dict[str, Any]:
             "action": action,
             "liveMode": True,
             "userId": config.ghl_user_id(),
+            "sentFrom": {
+                "fromName": INVOICE_SENDER_NAME,
+                "fromEmail": INVOICE_SENDER_EMAIL,
+            },
         },
         timeout=_TIMEOUT,
     )

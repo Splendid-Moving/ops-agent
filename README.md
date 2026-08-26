@@ -92,7 +92,7 @@ the same spot when the answer arrives.
 | `services/` | Talking to the outside world — GoHighLevel, Google Calendar, Maps, OCR. Nothing here knows the agent exists. |
 | `schemas/` | The business rules, as data. The booking checklist, the confirmation email, the rate table. **Change these to change behaviour.** |
 | `channels/` | How humans reach the agent. Currently Google Chat. |
-| `tests/` | 336 checks that run in under a second. |
+| `tests/` | 338 checks that run in under a second. |
 | `static/` | The browser UI and the email logo. |
 
 Entry points:
@@ -122,7 +122,7 @@ sent.** Reads still hit the live API, so you can develop against real calendar
 data without risk of texting a customer.
 
 ```bash
-pytest                        # 336 fast tests, no network
+pytest                        # 338 fast tests, no network
 pytest -m live                # hits real APIs — needs credentials
 ```
 
@@ -162,6 +162,14 @@ but they are priced by hand.
 **The confirmation email renders its own values.** GoHighLevel only substitutes
 `{{contact.*}}` when GHL itself sends a template; this agent posts raw HTML, so
 a merge tag would reach the customer literally.
+
+**GoHighLevel writes the deposit text, not this repo.** We hand it an invoice
+id; it composes the SMS from the account's *Invoice Received* template. No API
+field can change that wording — the template lives in Payments → Invoices &
+Estimates → Settings → Notifications. The one part we do control is the
+signature, via `sentFrom.fromName` in `services/ghl.py`, which is set to the
+company so customers are not signed off to by whichever staff account holds the
+API token.
 
 **State persists until something clears it.** The graph's state survives every
 turn — that is what lets a booking pause for an hour and resume. The cost is

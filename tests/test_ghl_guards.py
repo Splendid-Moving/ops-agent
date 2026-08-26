@@ -102,3 +102,51 @@ def test_every_picklist_id_is_a_real_field():
     """Catches a typo'd id in PICKLIST_VALUES that would disable a guard."""
     known = {v for k, v in vars(CustomField).items() if not k.startswith("_") and isinstance(v, str)}
     assert set(PICKLIST_VALUES).issubset(known)
+
+
+# ── Who the invoice text is signed by ──────────────────────────────────────────
+
+def test_invoice_send_signs_as_the_company(monkeypatch):
+    """
+    GHL writes the invoice SMS itself and signs it with `sentFrom.fromName`.
+    Drop that object and it signs with whoever `userId` points at — one staff
+    member's personal name — so the customer gets "Best, Adilet Almedino"
+    instead of "Best, Splendid Moving".
+
+    Nothing catches this in CI: the send returns 201 either way. It is only
+    visible on the customer's phone.
+    """
+    from services import config, ghl
+
+    sent: dict = {}
+
+    class FakeResponse:
+        ok = True
+        status_code = 201
+
+        @staticmethod
+        def json():
+            return {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent.update(json)
+        return FakeResponse()
+
+    monkeypatch.setattr(config, "dry_run", lambda: False)
+    monkeypatch.setattr(ghl.requests, "post", fake_post)
+
+    ghl.send_invoice("inv_123", action="sms")
+
+    assert sent["sentFrom"]["fromName"] == "Splendid Moving"
+    assert "@" in sent["sentFrom"]["fromEmail"]
+
+
+def test_invoice_sender_name_is_not_a_person():
+    """
+    A tempting 'fix' for a sender-name complaint is to point it at a different
+    staff member. That still puts an individual's name on every customer's
+    payment text. The value belongs to the company.
+    """
+    from services import ghl
+
+    assert ghl.INVOICE_SENDER_NAME == "Splendid Moving"
