@@ -92,7 +92,7 @@ the same spot when the answer arrives.
 | `services/` | Talking to the outside world — GoHighLevel, Google Calendar, Maps, OCR. Nothing here knows the agent exists. |
 | `schemas/` | The business rules, as data. The booking checklist, the confirmation email, the rate table. **Change these to change behaviour.** |
 | `channels/` | How humans reach the agent. Currently Google Chat. |
-| `tests/` | 338 checks that run in under a second. |
+| `tests/` | 354 checks that run in under a second. |
 | `static/` | The browser UI and the email logo. |
 
 Entry points:
@@ -122,7 +122,7 @@ sent.** Reads still hit the live API, so you can develop against real calendar
 data without risk of texting a customer.
 
 ```bash
-pytest                        # 338 fast tests, no network
+pytest                        # 354 fast tests, no network
 pytest -m live                # hits real APIs — needs credentials
 ```
 
@@ -162,6 +162,14 @@ but they are priced by hand.
 **The confirmation email renders its own values.** GoHighLevel only substitutes
 `{{contact.*}}` when GHL itself sends a template; this agent posts raw HTML, so
 a merge tag would reach the customer literally.
+
+**While the graph is paused, the router does not run.** The channel sends every
+message straight to the waiting node as `Command(resume=...)` — sending a plain
+message instead would restart the graph and lose the booking. So a question
+asked mid-booking ("how many jobs last month?") arrives at `ask_missing` as an
+answer to whatever it asked. It parses to nothing, gets acknowledged, and does
+not count against the loop guard. `/clear` is the way out, which is why it is
+checked before the graph runs at all.
 
 **GoHighLevel writes the deposit text, not this repo.** We hand it an invoice
 id; it composes the SMS from the account's *Invoice Received* template. No API

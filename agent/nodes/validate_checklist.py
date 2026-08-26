@@ -16,9 +16,18 @@ from schemas import checklist as cl
 
 logger = logging.getLogger(__name__)
 
-#: Stop asking after this many rounds and hand back to the user. Guards against
-#: a field that can never satisfy its validator looping forever.
+#: Stop asking after this many ATTEMPTS AT AN ANSWER and hand back to the user.
+#: Guards against a field that can never satisfy its validator looping forever.
 MAX_ASK_ROUNDS = 6
+
+#: Absolute cap on exchanges, whether or not they were answers.
+#:
+#: Deliberately looser than MAX_ASK_ROUNDS, because a dispatcher wandering off
+#: mid-booking should cost patience, not the booking. This is the guard on the
+#: guard: ask_missing only counts a round when a field actually lands, so a
+#: model that misclassified every reply as off-topic would freeze _ask_rounds at
+#: zero and give_up could never fire.
+MAX_ASK_TURNS = 14
 
 
 def validate_checklist(state: OpsAgentState) -> dict:
@@ -44,8 +53,12 @@ def next_step(state: OpsAgentState) -> str:
         return "confirm"
 
     rounds = int(intake.get("_ask_rounds", 0))
-    if rounds >= MAX_ASK_ROUNDS:
-        logger.warning("Hit the ask limit after %d rounds; stopping.", rounds)
+    turns = int(intake.get("_ask_turns", 0))
+    if rounds >= MAX_ASK_ROUNDS or turns >= MAX_ASK_TURNS:
+        logger.warning(
+            "Hit the ask limit after %d answer attempts / %d exchanges; stopping.",
+            rounds, turns,
+        )
         return "give_up"
 
     return "ask_missing"
