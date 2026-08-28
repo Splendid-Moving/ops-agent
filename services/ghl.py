@@ -92,7 +92,13 @@ class GHLError(RuntimeError):
     """A GHL API call failed. Carries the response body, which GHL uses for detail."""
 
     def __init__(self, message: str, status: int | None = None, body: str = ""):
-        super().__init__(message)
+        # The body is where GHL explains itself, and it must be part of the
+        # message rather than only an attribute. Nothing prints the attributes:
+        # the ledger stores str(exc) and the log prints the traceback, so a
+        # perfectly explicit API error — "Issue date cannot be after due date" —
+        # reached a human as the useless "Invoice creation failed" for weeks.
+        detail = f" [{status}] {body[:400]}" if (status or body) else ""
+        super().__init__(f"{message}{detail}")
         self.status = status
         self.body = body
 
@@ -294,8 +300,11 @@ def create_invoice(
     description: str = "",
 ) -> dict[str, Any]:
     """
-    Create an invoice. `issue_date` is YYYY-MM-DD. Due date is issue + 1 day,
-    matching the existing invoice_automation behaviour.
+    Create an invoice. `issue_date` is YYYY-MM-DD; due date is issue + 1 day.
+
+    NOTE: invoice_automation/services/ghl.py has the same two fields but derives
+    dueDate from `now` while passing the JOB date as issueDate — the exact
+    combination GHL rejects. Do not copy it back.
 
     Returns {"invoice_id": str, "dry_run": bool}.
     """
@@ -319,7 +328,13 @@ def create_invoice(
         "name": item_name,
         "currency": "USD",
         "issueDate": issue_date,
-        "dueDate": (datetime.now(tz) + timedelta(days=1)).strftime("%Y-%m-%d"),
+        # Derived from issue_date, NOT from today. GHL rejects an issue date
+        # after the due date outright, so computing this from `now` while the
+        # caller passes any future issue_date is a guaranteed 400. Keeping the
+        # two in the same expression makes that combination unrepresentable.
+        "dueDate": (
+            datetime.strptime(issue_date, "%Y-%m-%d") + timedelta(days=1)
+        ).strftime("%Y-%m-%d"),
         "businessDetails": {
             "name": business.get("name", "Splendid Moving"),
             "city": business.get("city", ""),

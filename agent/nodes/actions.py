@@ -224,8 +224,12 @@ def act_deposit_invoice(state: OpsAgentState) -> dict:
     if not contact_id:
         raise RuntimeError("No contact id — cannot invoice without a contact.")
 
-    move_date = formatting.parse_date(intake.get("move_date", ""))
-    issue_date = (move_date or datetime.now(calendar.LA_TZ)).strftime("%Y-%m-%d")
+    # Issued today, because that is when we want it paid — the deposit is what
+    # holds the slot. Dating it to the move date made the invoice due three days
+    # before it was issued, which GHL refuses with "Issue date cannot be after
+    # due date", so every booking further out than tomorrow silently lost its
+    # payment link. The move date belongs in the description, not in the dates.
+    issue_date = datetime.now(calendar.LA_TZ).strftime("%Y-%m-%d")
     amount = config.deposit_amount()
 
     invoice = ghl.create_invoice(

@@ -95,13 +95,12 @@ class ScreenshotExtraction(BaseModel):
         ),
     )
 
-    overall_notes: str | None = Field(
-        default=None,
-        description=(
-            "Anything else in the image a dispatcher would want to know: stairs, "
-            "elevator, heavy items, parking constraints, timing constraints."
-        ),
-    )
+    # There was a second free-text field here, `overall_notes`, described almost
+    # identically to `notes`. The model dutifully filled both and the two were
+    # joined with " | ", so every job carried its gas fee twice followed by a
+    # prose restatement of the date, the addresses and the arrival window —
+    # all of which already have their own fields and their own calendar lines.
+    # One field, one job.
 
 
 class JobIntake(BaseModel):

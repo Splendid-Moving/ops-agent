@@ -158,10 +158,27 @@ already answered.
 **source** — where the lead came from, if visible. The Yelp UI in the screenshot \
 is itself good evidence of "Yelp".
 
-**notes / overall_notes** — anything a dispatcher would want: stairs, elevator, \
-walk-up floor number, heavy or unusual items, parking or permit constraints, \
-timing constraints, mentions of extra fees. Capture generously; this is cheap \
-to include and expensive to lose.
+**notes** — operational detail a dispatcher CANNOT get from the other fields: \
+stairs, elevator, walk-up floor number, heavy or unusual items, parking or \
+permit constraints, timing constraints, agreed extra charges (gas fee, long \
+carry). Capture these generously — they are cheap to include and expensive to \
+lose.
+
+NEVER restate a value that already has its own field. These notes are printed \
+on the calendar event directly beneath the date, the addresses, the crew size \
+and the rate. Repeating them there is noise a dispatcher has to read past on \
+every single job, and it is the most common way this field goes wrong.
+
+  a $60 gas fee, moving 08/31 from Alhambra to Rowland Heights, 2-4pm
+    notes = "$60 gas fee"                                      correct
+    notes = "Service listed as local_move. $60 gas fee noted.
+             Move scheduled for 08/31/2026 with 2-4pm arrival
+             window between 2300 Poplar Blvd, Alhambra and
+             1300 Camerons St, Rowland Heights."               wrong — every
+                                                               fact but the fee
+                                                               is already a field
+  nothing operational in the image
+    notes = blank                                              correct
 
 # When the image has nothing useful
 Return the empty schema with all confidences at 0.0. That is a valid, useful \
@@ -281,14 +298,8 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     # Extraction notes seed job_notes but do NOT count as having asked — the
     # user is still prompted, because extra charges are agreed with staff and
     # will not be in a customer's screenshot.
-    notes = [
-        part for part in (
-            extraction.notes.value if extraction.notes.is_usable else None,
-            extraction.overall_notes,
-        ) if part
-    ]
-    if notes:
-        intake["job_notes"] = " | ".join(notes)
+    if extraction.notes.is_usable and (note := extraction.notes.value.strip()):
+        intake["job_notes"] = note
 
     return intake, confidence
 
