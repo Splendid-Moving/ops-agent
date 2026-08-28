@@ -197,6 +197,107 @@ def find_contact_by_phone(phone: str) -> dict[str, Any] | None:
     return None
 
 
+@traceable(run_type="tool", name="ghl.find_contact_by_email")
+def find_contact_by_email(email: str) -> dict[str, Any] | None:
+    """Search contacts by email, re-checked exactly the way the phone search is."""
+    target = (email or "").strip().lower()
+    if not target:
+        return None
+
+    resp = requests.get(
+        _url("/contacts/"),
+        headers=_headers(),
+        params={"locationId": config.ghl_location_id(), "query": target},
+        timeout=_TIMEOUT,
+    )
+    if not resp.ok:
+        raise GHLError("Contact search failed", resp.status_code, resp.text)
+
+    for contact in resp.json().get("contacts", []):
+        if (contact.get("email") or "").strip().lower() == target:
+            return contact
+    return None
+
+
+def contact_display_name(contact: dict[str, Any]) -> str:
+    """
+    The name on a contact record, however GHL chose to store it.
+
+    `contactName` is populated on search results and null on a direct fetch of
+    the same contact, so neither source alone is reliable.
+    """
+    return (
+        (contact.get("contactName") or "").strip()
+        or f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
+    )
+
+
+def _custom_field_value(contact: dict[str, Any], field_id: str) -> str:
+    for field in contact.get("customFields") or []:
+        if field.get("id") == field_id:
+            value = field.get("value")
+            if isinstance(value, list):
+                return ", ".join(str(v) for v in value)
+            return str(value or "")
+    return ""
+
+
+def _as_us_date(value: str) -> str:
+    """
+    GHL returns a DATE custom field two different ways: epoch milliseconds from
+    the contact SEARCH endpoint, and "YYYY-MM-DD" from a direct contact fetch.
+    Both reach this function, and neither is readable to a dispatcher.
+
+    Anything unrecognised comes back empty rather than raising — this only
+    feeds a line of context in a summary, and a booking must not fail over it.
+    """
+    value = (value or "").strip()
+    if not value:
+        return ""
+    if value.isdigit():
+        try:
+            return datetime.fromtimestamp(int(value) / 1000, tz=ZoneInfo("UTC")).strftime("%m/%d/%Y")
+        except (ValueError, OverflowError, OSError):
+            return ""
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d").strftime("%m/%d/%Y")
+    except ValueError:
+        return ""
+
+
+@traceable(run_type="tool", name="ghl.find_existing_contact")
+def find_existing_contact(phone: str, email: str = "") -> dict[str, Any] | None:
+    """
+    Find the contact this booking would UPDATE rather than create, before it
+    happens. Purely informational — it drives one line in the approval summary.
+
+    Matches on phone then email, mirroring how the location itself
+    deduplicates: `contactUniqueIdentifiers` on the location record is
+    ["phone", "email"], so a returning customer who changed one still resolves
+    to the same record.
+
+    Read-only by necessity. This is called above the confirm interrupt, so it
+    re-runs on every resume; anything with a side effect here would fire
+    repeatedly.
+
+    Returns {"id", "name", "last_move", "since"} or None.
+    """
+    contact = None
+    if phone:
+        contact = find_contact_by_phone(phone)
+    if contact is None and email:
+        contact = find_contact_by_email(email)
+    if contact is None:
+        return None
+
+    return {
+        "id": contact.get("id", ""),
+        "name": contact_display_name(contact),
+        "last_move": _as_us_date(_custom_field_value(contact, CustomField.MOVING_DATE)),
+        "since": (contact.get("dateAdded") or "")[:10],
+    }
+
+
 @traceable(run_type="tool", name="ghl.get_contact")
 def get_contact(contact_id: str) -> dict[str, Any]:
     resp = requests.get(_url(f"/contacts/{contact_id}"), headers=_headers(), timeout=_TIMEOUT)

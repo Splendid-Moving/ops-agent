@@ -23,12 +23,19 @@ from agent.nodes.resolve_addresses import unresolved_addresses
 from agent.state import OpsAgentState
 from schemas import checklist as cl
 from schemas.intake import EDITABLE_FIELDS
-from services import calendar, config, rates
+from services import calendar, config, ghl, rates
 
 logger = logging.getLogger(__name__)
 
 
-def _summary(intake: dict, warnings: dict, duplicate: dict | None) -> str:
+def _same_person(booked: str, on_file: str) -> bool:
+    """Loose name comparison — GHL stores casing and spacing inconsistently."""
+    norm = lambda v: " ".join((v or "").lower().split())
+    return norm(booked) == norm(on_file)
+
+
+def _summary(intake: dict, warnings: dict, duplicate: dict | None,
+             existing: dict | None = None) -> str:
     name = intake.get("full_name", "?")
     labor = intake.get("is_labor")
     movers = intake.get("movers", "?")
@@ -38,7 +45,8 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None) -> str:
     lines = [
         "Here's what I'll create. Nothing has happened yet.",
         "",
-        f"  Customer    {name}{' (labor only)' if labor else ''}",
+        f"  Customer    {name}{' (labor only)' if labor else ''}"
+        + (_returning_note(existing) if existing else ""),
         f"  Phone       {intake.get('phone', '?')}",
         f"  Email       {intake.get('email', '?')}",
         f"  Date        {intake.get('move_date', '?')} at {intake.get('arrival_time', '?')}",
@@ -69,6 +77,18 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None) -> str:
     if warnings:
         lines += ["", "⚠️  " + "; ".join(warnings.values())]
 
+    # A phone that resolves to someone else's record is the dangerous case: the
+    # booking would quietly overwrite a different customer's details, and every
+    # other check passes because the data itself is perfectly valid.
+    if existing and not _same_person(name, existing.get("name", "")):
+        lines += [
+            "",
+            "⚠️  That phone/email already belongs to a different name in GoHighLevel:",
+            f"     on file: {existing.get('name') or '(no name)'}",
+            f"     booking: {name}",
+            "     Going ahead updates that contact rather than creating a new one.",
+        ]
+
     if duplicate:
         lines += [
             "",
@@ -84,6 +104,34 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None) -> str:
         "(e.g. 'arrival 10-11am', 'make it 4 movers').",
     ]
     return "\n".join(lines)
+
+
+def _returning_note(existing: dict) -> str:
+    """
+    Marks a customer who has moved with us before.
+
+    Worth a line for two reasons: a repeat booking is commercially interesting,
+    and seeing the record we are about to update is the only chance to notice
+    that a mistyped phone number has matched somebody else entirely.
+    """
+    if last := existing.get("last_move"):
+        return f"  ·  returning customer, last move {last}"
+    if since := existing.get("since"):
+        return f"  ·  returning customer, on file since {since}"
+    return "  ·  returning customer"
+
+
+def _find_existing_contact(intake: dict) -> dict | None:
+    """
+    Read-only, and above the interrupt, so it re-runs on every resume — which is
+    fine for a GET and would not be for anything else. Never fatal: this is
+    context, not a gate.
+    """
+    try:
+        return ghl.find_existing_contact(intake.get("phone", ""), intake.get("email", ""))
+    except Exception:
+        logger.exception("Existing-contact lookup failed; continuing without it")
+        return None
 
 
 def _find_duplicate(intake: dict) -> dict | None:
@@ -106,12 +154,13 @@ def confirm(state: OpsAgentState) -> Command[Literal["execute", "ask_missing", "
     intake = dict(state.get("intake") or {})
     result = cl.evaluate(intake)
     duplicate = _find_duplicate(intake)
+    existing = _find_existing_contact(intake)
 
     # ── Above the interrupt: pure formatting + a read-only lookup. ──
     answer = interrupt(
         {
             "type": "confirm",
-            "message": _summary(intake, result.warnings, duplicate),
+            "message": _summary(intake, result.warnings, duplicate, existing),
             "intake": intake,
             "duplicate": duplicate,
         }
