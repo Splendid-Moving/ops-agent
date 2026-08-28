@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 
 from agent.graph import build_graph
 from channels import google_chat
-from services import config
+from services import config, tracing
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,6 +81,10 @@ def _checkpointer():
 
 app = FastAPI(title="Splendid Moving ops agent")
 
+# Before the graph is built, so the tracing state is the first thing in the log
+# and a bad LangSmith key is obvious rather than silent.
+tracing.configure()
+
 graph = build_graph(checkpointer=_checkpointer())
 google_chat.attach_graph(graph)
 app.include_router(google_chat.router)
@@ -131,6 +135,7 @@ def status():
         "backend": config.model_backend(),
         "deposit": config.deposit_amount(),
         "web_ui": bool(config.web_ui_token()),
+        "tracing": tracing.status(),
         "chat": {
             "verify_requests": config.chat_verify_requests(),
             "audience": config.chat_audience() or None,

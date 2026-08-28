@@ -9,6 +9,7 @@ never block a booking.
 import logging
 
 import requests
+from langsmith import traceable
 
 from services import config
 
@@ -46,6 +47,7 @@ def _leg_miles(origin: str, destination: str) -> float | None:
         return None
 
 
+@traceable(run_type="tool", name="maps.get_distance")
 def get_distance(from_address: str, to_address: str, extra_stop: str | None = None) -> str:
     """
     Formatted trip distance, e.g. '12.4 miles'. Returns '' on any failure.

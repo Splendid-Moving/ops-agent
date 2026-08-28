@@ -38,6 +38,8 @@ import google.auth.transport.requests as google_requests
 import requests
 from google.oauth2 import service_account
 
+from langsmith import traceable
+
 from services import config
 
 logger = logging.getLogger(__name__)
@@ -83,6 +85,23 @@ class OCRUnavailable(RuntimeError):
     """Cloud Vision could not be reached. An operator problem, not a data one."""
 
 
+def _redact_image(inputs: dict) -> dict:
+    """
+    Replace the base64 image with its size before the trace is uploaded.
+
+    Without this, every trace carries a multi-megabyte base64 string as the
+    input to this step. That is slow to upload, unreadable in the UI, and it is
+    a picture of a customer's private message thread. The byte count is the only
+    part anyone ever actually wants — it answers "did the image arrive at all".
+
+    `process_inputs` runs only on the way to LangSmith. The real function still
+    receives the real image.
+    """
+    b64 = inputs.get("image_b64") or ""
+    return {"image_b64": f"<{len(b64)} base64 chars — not uploaded>"}
+
+
+@traceable(run_type="tool", name="ocr.extract_text", process_inputs=_redact_image)
 def extract_text(image_b64: str) -> str:
     """
     All text in an image, as one string. `image_b64` is raw base64 — no data

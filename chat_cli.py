@@ -21,7 +21,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from agent.graph import build_graph
-from services import config
+from services import config, tracing
 
 DIM = "\033[2m"
 BOLD = "\033[1m"
@@ -54,8 +54,9 @@ def send(graph, thread_id: str, payload):
 
     Any frontend built against this agent needs this exact check.
     """
-    config_ = {"configurable": {"thread_id": thread_id}}
-    snapshot = graph.get_state(config_)
+    snapshot = graph.get_state({"configurable": {"thread_id": thread_id}})
+    turn = tracing.TURN_RESUME if snapshot.next else tracing.TURN_MESSAGE
+    config_ = tracing.run_config(thread_id, channel=tracing.CHANNEL_CLI, turn=turn)
 
     if snapshot.next:  # paused mid-graph, waiting on a human
         result = graph.invoke(Command(resume=payload), config_)
@@ -80,6 +81,7 @@ def main() -> int:
 
     mode = "DRY RUN" if config.dry_run() else "LIVE — writes are real"
     print(f"{BOLD}Splendid Moving ops agent{RESET} {DIM}({mode}, backend={config.model_backend()}){RESET}")
+    print(f"{DIM}{tracing.configure()}{RESET}")
 
     def show(result, pause):
         if pause is not None:

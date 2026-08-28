@@ -67,7 +67,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
-from services import config
+from services import config, tracing
 
 logger = logging.getLogger(__name__)
 
@@ -753,7 +753,16 @@ def run_graph(event: dict, decision: str | None = None,
     becomes a message the user can actually read.
     """
     thread_id = thread_id_for(event)
-    cfg = {"configurable": {"thread_id": thread_id}}
+    # A button press resumes a paused graph; anything else is a fresh message.
+    # The distinction is only a label, but it is the one that makes a short
+    # trace starting mid-graph read as a resume rather than a broken run.
+    cfg = tracing.run_config(
+        thread_id,
+        channel=tracing.CHANNEL_GOOGLE_CHAT,
+        turn=tracing.TURN_BUTTON if decision is not None else tracing.TURN_MESSAGE,
+        chat_space=(event.get("space") or {}).get("name", ""),
+        delivery="inline",
+    )
 
     try:
         paused = _is_paused(thread_id)
@@ -770,6 +779,10 @@ def run_graph(event: dict, decision: str | None = None,
             graph_input: object = Command(resume=decision)
         else:
             graph_input = build_graph_input(event, paused)
+
+        # A typed reply to a paused booking is a resume as much as a button is.
+        if paused and decision is None:
+            cfg = tracing.as_resume(cfg)
 
         _graph.invoke(graph_input, cfg)
 
@@ -802,7 +815,13 @@ def process_event(event: dict, decision: str | None = None) -> None:
     space = (event.get("space") or {}).get("name", "")
     thread_id = thread_id_for(event)
     reply_thread = reply_thread_for(event)
-    cfg = {"configurable": {"thread_id": thread_id}}
+    cfg = tracing.run_config(
+        thread_id,
+        channel=tracing.CHANNEL_GOOGLE_CHAT,
+        turn=tracing.TURN_BUTTON if decision is not None else tracing.TURN_MESSAGE,
+        chat_space=space,
+        delivery="background",
+    )
 
     placeholder = post_message(space, "_Working on it…_", thread=reply_thread)
 
@@ -819,6 +838,10 @@ def process_event(event: dict, decision: str | None = None) -> None:
             graph_input: object = Command(resume=decision)
         else:
             graph_input = build_graph_input(event, paused)
+
+        # A typed reply to a paused booking is a resume as much as a button is.
+        if paused and decision is None:
+            cfg = tracing.as_resume(cfg)
 
         last_patch = 0.0
         for mode, chunk in _graph.stream(

@@ -63,9 +63,17 @@ Copy everything from your local `.env`, plus:
 | `CHAT_VERIFY_REQUESTS` | `true` |
 | `DRY_RUN` | **`true` for now** — see step 5 |
 | `WEB_UI_TOKEN` | leave blank unless you want the browser UI public |
+| `LANGSMITH_PROJECT` | `splendid-ops-agent` — must differ from whatever you use locally, or your test runs and real bookings share one list |
 
 > **Start with `DRY_RUN=true`.** The first deploy should not be able to text
 > customers. You'll flip it once you've watched it work end to end.
+
+> **On `LANGSMITH_TRACING`:** leave it off until you need it, then turn it on
+> deliberately. Traces are the fastest way to debug a failed booking, and they
+> upload real customer names, phone numbers, addresses and screenshots to
+> LangSmith to do it. See the Observability section of the README.
+> `GET /api/status` reports whether tracing is actually on and whether the key
+> was accepted — worth checking, because a bad key fails silently.
 
 ---
 

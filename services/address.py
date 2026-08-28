@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 import requests
+from langsmith import traceable
 
 from services import config
 from services.formatting import format_address, strip_address_label
@@ -176,6 +177,7 @@ def _state_written_by_user(text: str) -> str:
     return ""
 
 
+@traceable(run_type="tool", name="address.validate")
 def validate(address: str, *, region: str = "US") -> ValidatedAddress:
     """
     Complete and verify a single address.
@@ -341,6 +343,7 @@ def validate(address: str, *, region: str = "US") -> ValidatedAddress:
     )
 
 
+@traceable(run_type="tool", name="address.validate_many")
 def validate_many(addresses: dict[str, str]) -> dict[str, ValidatedAddress]:
     """
     Validate several labelled addresses at once, e.g.

@@ -434,8 +434,9 @@ usefulness:
   cousin: nodes emit plain-language progress lines.
 - **Postgres checkpointing** — same interface as the SQLite one, needed the day
   you run more than one instance.
-- **LangSmith** — see every step, every prompt, every timing of a run. The env
-  vars are already in `.env.example`; set `LANGSMITH_TRACING=true`.
+- **LangSmith** — see every step, every prompt, every timing of a run. Already
+  wired up: set `LANGSMITH_TRACING=true` and `LANGSMITH_API_KEY`, and read the
+  Observability section of the README before you do.
 - **Subgraphs** — a graph used as a node. Reach for it when one file gets too
   big to hold in your head.
 

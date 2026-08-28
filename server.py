@@ -27,7 +27,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 from agent.graph import build_graph
-from services import config
+from services import config, tracing
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ def status():
         "dry_run": config.dry_run(),
         "backend": config.model_backend(),
         "deposit": config.deposit_amount(),
+        "tracing": tracing.status(),
     }
 
 
@@ -94,7 +95,7 @@ async def chat(
     image: UploadFile | None = File(None),
 ):
     thread_id = thread_id or str(uuid.uuid4())
-    cfg = {"configurable": {"thread_id": thread_id}}
+    cfg = tracing.run_config(thread_id, channel=tracing.CHANNEL_WEB, has_image=image is not None)
 
     payload: object = message
     if image is not None:
@@ -115,7 +116,7 @@ async def chat(
             # Paused at an interrupt. Resume values are plain text — an image
             # here would be a new job, not an answer, so it starts a new turn.
             resume_value = message if not isinstance(payload, HumanMessage) else message
-            result = get_graph().invoke(Command(resume=resume_value), cfg)
+            result = get_graph().invoke(Command(resume=resume_value), tracing.as_resume(cfg))
         else:
             msg = payload if isinstance(payload, HumanMessage) else HumanMessage(content=message)
             result = get_graph().invoke({"messages": [msg]}, cfg)
@@ -161,7 +162,9 @@ async def chat_stream(
     staring at a spinner while four API calls happen invisibly.
     """
     thread_id = thread_id or str(uuid.uuid4())
-    cfg = {"configurable": {"thread_id": thread_id}}
+    cfg = tracing.run_config(
+        thread_id, channel=tracing.CHANNEL_WEB, streaming=True, has_image=image is not None
+    )
 
     payload: object = message
     if image is not None:
@@ -184,6 +187,7 @@ async def chat_stream(
             snapshot = get_graph().get_state(cfg)
             if snapshot.next:
                 graph_input = Command(resume=message)
+                cfg = tracing.as_resume(cfg)
             else:
                 msg = payload if isinstance(payload, HumanMessage) else HumanMessage(content=message)
                 graph_input = {"messages": [msg]}
@@ -240,5 +244,6 @@ if __name__ == "__main__":
     mode = "DRY RUN — nothing will be created" if config.dry_run() else "*** LIVE — writes are real ***"
     print(f"\n  Splendid Moving ops agent")
     print(f"  {mode}")
+    print(f"  {tracing.configure()}")
     print(f"  http://localhost:8080\n")
     uvicorn.run(app, host="127.0.0.1", port=8080, log_level="warning")

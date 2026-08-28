@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from langsmith import traceable
 
 from services import config
 
@@ -137,8 +138,14 @@ def is_job_event(fields: dict[str, str]) -> bool:
     )
 
 
+# The Calendar calls are traced (see the note in services/ghl.py). list_jobs
+# especially: the analytics lane asks it a question per turn, and a wrong
+# answer there is nearly always a wrong date range rather than a bad model —
+# which the trace shows directly, as the arguments the node passed in.
+
 # ── Reads ──────────────────────────────────────────────────────────────────────
 
+@traceable(run_type="tool", name="calendar.list_events")
 def list_events(start: datetime, end: datetime) -> list[dict[str, Any]]:
     """Raw events in a datetime range. Recurring events are expanded."""
     result = (
@@ -157,6 +164,7 @@ def list_events(start: datetime, end: datetime) -> list[dict[str, Any]]:
     return result.get("items", [])
 
 
+@traceable(run_type="tool", name="calendar.list_jobs")
 def list_jobs(start: datetime, end: datetime) -> list[dict[str, Any]]:
     """
     Job events in a range, parsed into flat dicts. Non-job events are dropped.
@@ -221,6 +229,7 @@ def list_jobs(start: datetime, end: datetime) -> list[dict[str, Any]]:
     return jobs
 
 
+@traceable(run_type="tool", name="calendar.find_by_fingerprint")
 def find_by_fingerprint(fingerprint: str) -> list[dict[str, Any]]:
     """
     Look up events this agent created, by fingerprint. Used for duplicate
@@ -241,6 +250,7 @@ def find_by_fingerprint(fingerprint: str) -> list[dict[str, Any]]:
     return result.get("items", [])
 
 
+@traceable(run_type="tool", name="calendar.find_duplicate_job")
 def find_duplicate_job(phone: str, move_date: str) -> dict[str, Any] | None:
     """
     Catch a job already on the calendar for this customer and date, regardless of
@@ -267,6 +277,7 @@ def find_duplicate_job(phone: str, move_date: str) -> dict[str, Any] | None:
 
 # ── Writes ─────────────────────────────────────────────────────────────────────
 
+@traceable(run_type="tool", name="calendar.create_event")
 def create_event(
     *,
     title: str,

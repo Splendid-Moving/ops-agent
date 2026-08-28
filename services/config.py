@@ -179,3 +179,31 @@ def web_ui_token() -> str:
 
 def model_backend() -> str:
     return os.getenv("MODEL_BACKEND", "openai").strip().lower()
+
+
+# ── Observability ──────────────────────────────────────────────────────────────
+
+def langsmith_tracing() -> bool:
+    """
+    Whether runs are uploaded to LangSmith.
+
+    Defaults to False. Tracing sends the FULL contents of every run — customer
+    names, phone numbers, email addresses, home addresses and the screenshots
+    themselves — to LangSmith's servers, so it is opt-in rather than opt-out.
+
+    The LangSmith SDK reads this same variable itself; it is declared here so
+    the app can report and reason about it like every other setting.
+    """
+    return os.getenv("LANGSMITH_TRACING", "false").strip().lower() in ("true", "1", "yes")
+
+
+def langsmith_project() -> str:
+    """
+    Which LangSmith project runs land in. Set this to something different on
+    Railway than locally, or local experiments and real bookings share a list.
+    """
+    return os.getenv("LANGSMITH_PROJECT", "splendid-ops-agent").strip()
+
+
+def langsmith_api_key() -> str:
+    return os.getenv("LANGSMITH_API_KEY", "").strip()

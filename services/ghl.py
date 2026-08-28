@@ -18,6 +18,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
+from langsmith import traceable
 
 from services import config
 
@@ -146,8 +147,26 @@ def normalize_phone(phone: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
+# ── Tracing ────────────────────────────────────────────────────────────────────
+# Every function below that touches the GHL API is wrapped in @traceable, so it
+# shows as its own step inside the LangSmith trace for the run that called it,
+# with the arguments it sent and the JSON it got back.
+#
+# LangGraph traces its own nodes automatically. It cannot see in here — from its
+# side, `act_deposit_invoice` is one opaque node that either worked or raised.
+# These decorators are what turn "the invoice node failed" into "GHL returned
+# 422 on /invoices because RATE was not one of the three allowed strings".
+#
+# run_type="tool" is the LangSmith category for an external call. It only
+# affects how the step is rendered and filtered, not what is captured.
+#
+# The decorator is inert when LANGSMITH_TRACING is false — it checks on every
+# call rather than at import, so nothing here runs in normal operation.
+
+
 # ── Reads ──────────────────────────────────────────────────────────────────────
 
+@traceable(run_type="tool", name="ghl.find_contact_by_phone")
 def find_contact_by_phone(phone: str) -> dict[str, Any] | None:
     """
     Search contacts by phone. GHL's search is fuzzy, so results are re-checked
@@ -172,6 +191,7 @@ def find_contact_by_phone(phone: str) -> dict[str, Any] | None:
     return None
 
 
+@traceable(run_type="tool", name="ghl.get_contact")
 def get_contact(contact_id: str) -> dict[str, Any]:
     resp = requests.get(_url(f"/contacts/{contact_id}"), headers=_headers(), timeout=_TIMEOUT)
     if not resp.ok:
@@ -180,6 +200,7 @@ def get_contact(contact_id: str) -> dict[str, Any]:
     return data.get("contact", data)
 
 
+@traceable(run_type="tool", name="ghl.get_business_details")
 def get_business_details() -> dict[str, Any]:
     """Business block from the location record — required on the invoice payload."""
     resp = requests.get(
@@ -192,6 +213,7 @@ def get_business_details() -> dict[str, Any]:
 
 # ── Contact upsert ─────────────────────────────────────────────────────────────
 
+@traceable(run_type="tool", name="ghl.upsert_contact")
 def upsert_contact(
     *,
     first_name: str,
@@ -262,6 +284,7 @@ def upsert_contact(
 
 # ── Invoices ───────────────────────────────────────────────────────────────────
 
+@traceable(run_type="tool", name="ghl.create_invoice")
 def create_invoice(
     *,
     contact_id: str,
@@ -358,6 +381,7 @@ INVOICE_SENDER_NAME = "Splendid Moving"
 INVOICE_SENDER_EMAIL = "info@splendidmoving.com"
 
 
+@traceable(run_type="tool", name="ghl.send_invoice")
 def send_invoice(invoice_id: str, action: str = "sms") -> dict[str, Any]:
     """
     Deliver an invoice to the contact. action is 'sms' or 'email'.
@@ -395,6 +419,7 @@ def send_invoice(invoice_id: str, action: str = "sms") -> dict[str, Any]:
 
 # ── Conversations ──────────────────────────────────────────────────────────────
 
+@traceable(run_type="tool", name="ghl.send_sms")
 def send_sms(contact_id: str, message: str) -> dict[str, Any]:
     if config.dry_run():
         logger.info("[DRY RUN] send_sms to %s:\n%s", contact_id, message)
@@ -411,6 +436,7 @@ def send_sms(contact_id: str, message: str) -> dict[str, Any]:
     return {"sent": True, "dry_run": False, "response": resp.json()}
 
 
+@traceable(run_type="tool", name="ghl.send_email")
 def send_email(
     contact_id: str,
     subject: str,
