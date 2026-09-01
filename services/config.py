@@ -129,6 +129,14 @@ def chat_verify_requests() -> bool:
 
 TIMEZONE = "America/Los_Angeles"
 
+
+def daily_reset() -> bool:
+    """
+    Whether a conversation left over from a previous day is discarded on the
+    next message. On by default; set DAILY_RESET=false to keep threads forever.
+    """
+    return os.getenv("DAILY_RESET", "true").strip().lower() not in ("false", "0", "no")
+
 #: Depot address — used for the >30mi early-slot rule.
 DEPOT_ADDRESS = "909 Beacon Ave, Los Angeles, CA"
 

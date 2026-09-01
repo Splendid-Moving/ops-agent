@@ -92,7 +92,7 @@ the same spot when the answer arrives.
 | `services/` | Talking to the outside world — GoHighLevel, Google Calendar, Maps, OCR. Nothing here knows the agent exists. |
 | `schemas/` | The business rules, as data. The booking checklist, the confirmation email, the rate table. **Change these to change behaviour.** |
 | `channels/` | How humans reach the agent. Currently Google Chat. |
-| `tests/` | 366 checks that run in under a second. |
+| `tests/` | 427 checks that run in under a second. |
 | `static/` | The browser UI and the email logo. |
 
 Entry points:
@@ -122,7 +122,7 @@ sent.** Reads still hit the live API, so you can develop against real calendar
 data without risk of texting a customer.
 
 ```bash
-pytest                        # 366 fast tests, no network
+pytest                        # 427 fast tests, no network
 pytest -m live                # hits real APIs — needs credentials
 ```
 
@@ -237,6 +237,14 @@ but they are priced by hand.
 **The confirmation email renders its own values.** GoHighLevel only substitutes
 `{{contact.*}}` when GHL itself sends a template; this agent posts raw HTML, so
 a merge tag would reach the customer literally.
+
+**Conversations expire daily.** A thread whose last activity was on an earlier
+Los Angeles date is discarded on the next message, before anything reads it.
+This is a check on the way in rather than a job scheduled at 00:00 — a timer
+would have to survive Railway restarting on every deploy and could race the
+webhook mid-turn, while the lazy version has nothing to drift. If an unfinished
+booking is what gets discarded, the reply says so by name; a finished or idle
+conversation is cleared silently. `DAILY_RESET=false` turns it off.
 
 **While the graph is paused, the router does not run.** The channel sends every
 message straight to the waiting node as `Command(resume=...)` — sending a plain

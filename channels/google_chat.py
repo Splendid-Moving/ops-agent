@@ -743,6 +743,115 @@ def reset_thread(thread_id: str) -> bool:
         return False
 
 
+def _today_la():
+    """
+    Today's date where the dispatcher is standing.
+
+    A separate function so the day boundary is testable without waiting for
+    midnight — that boundary is the only interesting part of the expiry rule.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    return datetime.now(ZoneInfo(config.TIMEZONE)).date()
+
+
+def _last_activity(thread_id: str):
+    """
+    When this conversation last wrote state, as a datetime in LA time.
+
+    The latest checkpoint's timestamp IS the last activity — the graph writes
+    one on every super-step — so nothing extra has to be stored to know this.
+    None means there is no conversation to expire.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    cfg = {"configurable": {"thread_id": thread_id}}
+    try:
+        created = _graph.get_state(cfg).created_at
+    except Exception:
+        logger.exception("Could not read last activity for %s", thread_id)
+        return None
+    if not created:
+        return None
+    try:
+        return datetime.fromisoformat(created).astimezone(ZoneInfo(config.TIMEZONE))
+    except ValueError:
+        logger.warning("Unparseable checkpoint timestamp %r", created)
+        return None
+
+
+def expire_stale_thread(thread_id: str) -> dict | None:
+    """
+    Discard a conversation carried over from a previous day, before it is used.
+
+    ── Why this is lazy rather than a scheduled job ───────────────────────────
+
+    A background timer firing at 00:00 would have to survive Railway restarting
+    on every deploy, would race the webhook if it fired mid-turn, and would do
+    work on days nobody messages. Checking on the way in is equivalent from the
+    user's side — they can never reach yesterday's state — and it has no moving
+    parts: no thread, no clock to drift, no state of its own to get wrong.
+
+    ── What counts as a new day ───────────────────────────────────────────────
+
+    The LA calendar date, so "midnight" means midnight to the dispatcher rather
+    than in UTC. A conversation at 23:58 continued at 23:59 is untouched; the
+    same conversation continued at 00:01 starts fresh, which is the whole point.
+
+    Returns a description of what was discarded, or None if nothing was.
+    """
+    if not config.daily_reset():
+        return None
+
+    last = _last_activity(thread_id)
+    if last is None:
+        return None
+
+    if last.date() >= _today_la():
+        return None
+
+    # Read what is about to be lost BEFORE deleting it, so the reply can name a
+    # booking that vanished instead of leaving someone wondering.
+    cfg = {"configurable": {"thread_id": thread_id}}
+    unfinished, customer = False, ""
+    try:
+        snapshot = _graph.get_state(cfg)
+        intake = (snapshot.values or {}).get("intake") or {}
+        unfinished = bool(snapshot.next) and bool(intake)
+        customer = intake.get("full_name", "")
+    except Exception:
+        logger.exception("Could not inspect %s before expiring it", thread_id)
+
+    if not reset_thread(thread_id):
+        return None
+
+    logger.info(
+        "Expired %s — last active %s, unfinished=%s", thread_id, last.date(), unfinished
+    )
+    return {"last_active": last.strftime("%m/%d/%Y"), "unfinished": unfinished,
+            "customer": customer}
+
+
+def _expiry_notice(expired: dict | None) -> str:
+    """
+    Announce an expiry only when something was actually lost.
+
+    A finished or idle conversation being cleared is invisible housekeeping and
+    saying so is noise. A half-finished booking disappearing is not — that has
+    to be visible, or it looks like the agent forgot.
+    """
+    if not expired or not expired["unfinished"]:
+        return ""
+    who = expired["customer"] or "a customer"
+    return (
+        f"Note: the unfinished booking for *{who}* from {expired['last_active']} "
+        "was cleared — conversations reset daily. Nothing was created in "
+        "GoHighLevel or the calendar. Send the screenshot again to redo it.\n\n"
+    )
+
+
 def run_graph(event: dict, decision: str | None = None,
               buttons: bool = True) -> tuple[str, dict | None]:
     """
@@ -765,6 +874,11 @@ def run_graph(event: dict, decision: str | None = None,
     )
 
     try:
+        # Before anything reads the thread: drop it if it is left over from a
+        # previous day. Must happen ahead of _is_paused, or a stale booking
+        # would be resumed rather than discarded.
+        notice = _expiry_notice(expire_stale_thread(thread_id))
+
         paused = _is_paused(thread_id)
         # Logged every turn: a thread_id that changes between messages is the
         # one failure that looks like the agent forgetting rather than erroring.
@@ -787,14 +901,14 @@ def run_graph(event: dict, decision: str | None = None,
         _graph.invoke(graph_input, cfg)
 
         if interrupt_value := _pending_interrupt(thread_id):
-            text = interrupt_value.get("message", "")
+            text = notice + interrupt_value.get("message", "")
             if interrupt_value.get("type") == "confirm":
                 return "", confirm_card(text, with_buttons=buttons)
             return text, None
 
         final = _graph.get_state(cfg).values
         messages = final.get("messages") or []
-        return (str(messages[-1].content) if messages else "(no response)"), None
+        return notice + (str(messages[-1].content) if messages else "(no response)"), None
 
     except Exception as exc:
         logger.exception("Graph run failed for %s", thread_id)
