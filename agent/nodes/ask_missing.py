@@ -86,8 +86,9 @@ class ParsedReply(BaseModel):
     job_notes: str | None = Field(
         default=None,
         description=(
-            "Notes text. If the user says 'none'/'no'/'nothing', return the empty "
-            "string — that is an answer, distinct from not addressing it at all (null)."
+            "Notes text, one fact per line, each line starting with '- '. "
+            "If the user says 'none'/'no'/'nothing', return the empty string — "
+            "that is an answer, distinct from not addressing it at all (null)."
         ),
     )
     unclear: list[str] = Field(

@@ -46,6 +46,49 @@ def parse_date(date_str: str) -> datetime | None:
     return None
 
 
+_WEEKDAYS = {
+    "monday": 0, "mon": 0, "tuesday": 1, "tue": 1, "tues": 1,
+    "wednesday": 2, "wed": 2, "thursday": 3, "thu": 3, "thurs": 3,
+    "friday": 4, "fri": 4, "saturday": 5, "sat": 5, "sunday": 6, "sun": 6,
+}
+
+_WEEKDAY_RE = re.compile(
+    r"\b(?:this|next|coming|upcoming|on|for)?\s*"
+    r"(" + "|".join(sorted(_WEEKDAYS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def resolve_relative_date(text: str, today: datetime) -> datetime | None:
+    """
+    Turn "Friday", "upcoming Friday", "tomorrow" into a real date.
+
+    Deterministic backstop for the extraction model, which resolves these
+    correctly most of the time and returns nothing the rest — costing the
+    dispatcher a question they already answered. Weekday arithmetic does not
+    need a model.
+
+    A weekday naming today resolves to a week out, not to today: someone typing
+    "Friday" on a Friday is booking ahead, and a same-day move booked by mistake
+    is the more expensive reading. Returns None for anything not recognised.
+    """
+    if not text:
+        return None
+    lowered = str(text).lower()
+
+    if re.search(r"\btomorrow\b", lowered):
+        return today + timedelta(days=1)
+    if re.search(r"\btoday\b", lowered):
+        return today
+
+    match = _WEEKDAY_RE.search(lowered)
+    if not match:
+        return None
+
+    ahead = (_WEEKDAYS[match.group(1)] - today.weekday()) % 7
+    return today + timedelta(days=ahead or 7)
+
+
 def format_date(dt: datetime) -> str:
     """mm/dd/yyyy — the form the calendar `Date:` line uses."""
     return dt.strftime("%m/%d/%Y")
@@ -217,6 +260,27 @@ _SOURCE_ALIASES = {
     "referral": "Referral",
     "thumbtack": "Thumbtack",
 }
+
+
+def format_notes(raw: str) -> str:
+    """
+    One fact per line, each prefixed with "- ".
+
+    Not only cosmetic. Notes land on the lines after "Notes:" in the calendar
+    description, which four other repos parse with ^([A-Za-z ]+):\\s*(.*) — so a
+    bare note reading "Parking: tight" becomes a phantom `parking` field in
+    their pipelines. A leading "- " cannot match that pattern.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+
+    items = []
+    for chunk in text.replace(" | ", "\n").splitlines():
+        item = chunk.strip().lstrip("-•*").strip()
+        if item:
+            items.append(f"- {item}")
+    return "\n".join(items)
 
 
 def normalize_source(raw: str) -> str:

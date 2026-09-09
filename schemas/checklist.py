@@ -213,6 +213,7 @@ CHECKLIST: tuple[FieldSpec, ...] = (
         # they are commercially important. A blank answer is fine; not asking
         # is not.
         ask="Any notes for this job? (extra charges, gas fee, stairs, parking — 'none' is fine)",
+        normalizer=formatting.format_notes,
         always_ask=True,
     ),
 )

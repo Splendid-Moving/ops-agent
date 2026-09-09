@@ -7,6 +7,8 @@ past on every job — and the agent was producing exactly that, twice over,
 because two near-identical schema fields were both filled and then joined.
 """
 
+import pytest
+
 from schemas.intake import ScreenshotExtraction
 from agent.nodes.extract_screenshot import _to_intake
 
@@ -24,10 +26,10 @@ def test_notes_come_from_one_field_only():
     assert "overall_notes" not in ScreenshotExtraction.model_fields
 
 
-def test_a_real_note_survives():
+def test_a_real_note_survives_as_a_bullet():
     extraction = _extraction(notes={"value": "$60 gas fee", "confidence": 0.95})
     intake, _ = _to_intake(extraction)
-    assert intake["job_notes"] == "$60 gas fee"
+    assert intake["job_notes"] == "- $60 gas fee"
 
 
 def test_no_separator_can_appear_in_a_single_note():
@@ -66,3 +68,55 @@ def test_the_prompt_forbids_restating_other_fields():
     """
     from agent.nodes import extract_screenshot as node
     assert "NEVER restate a value that already has its own field" in node.SYSTEM_PROMPT_BODY
+
+
+# ── The bullet format ──────────────────────────────────────────────────────────
+
+def test_several_facts_each_get_their_own_line():
+    extraction = _extraction(
+        notes={"value": "- $60 gas fee\n- Third floor walk-up", "confidence": 0.95}
+    )
+    intake, _ = _to_intake(extraction)
+    assert intake["job_notes"] == "- $60 gas fee\n- Third floor walk-up"
+
+
+def test_bullets_stop_notes_leaking_into_the_calendar_as_fields():
+    """
+    The real reason for the format. Notes sit on the lines after "Notes:" in
+    the event description, which four other repos parse with ^([A-Za-z ]+):.
+    A bare "Parking: tight" becomes a phantom `parking` field in their
+    pipelines; a leading "- " cannot match.
+    """
+    from services import calendar, formatting
+
+    raw = "Parking: tight\nStairs: 3 flights"
+    leaky = calendar.build_description(
+        customer="X", phone="p", date="d", from_address="a", to_address="b", notes=raw)
+    safe = calendar.build_description(
+        customer="X", phone="p", date="d", from_address="a", to_address="b",
+        notes=formatting.format_notes(raw))
+
+    assert "parking" in calendar.parse_description(leaky)
+    assert "parking" not in calendar.parse_description(safe)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("$60 gas fee", "- $60 gas fee"),
+    ("- already bulleted", "- already bulleted"),          # not doubled up
+    ("• unicode bullet", "- unicode bullet"),
+    ("* asterisk", "- asterisk"),
+    ("a | b", "- a\n- b"),                                  # the old join format
+    ("a\n\n\nb", "- a\n- b"),                               # blank lines dropped
+    ("", ""),
+    ("   ", ""),
+])
+def test_note_shapes_normalise(raw, expected):
+    from services import formatting
+    assert formatting.format_notes(raw) == expected
+
+
+def test_an_address_in_a_note_is_not_split_on_its_comma():
+    """Splitting on commas would cut "1561 W 223rd St, Torrance" in half."""
+    from services import formatting
+    assert formatting.format_notes("drop at 1561 W 223rd St, Torrance") == \
+        "- drop at 1561 W 223rd St, Torrance"

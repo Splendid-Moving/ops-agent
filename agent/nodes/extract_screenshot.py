@@ -24,6 +24,7 @@ from agent.state import OpsAgentState, booking_has_run, new_ledger
 from schemas import business_context
 from schemas.intake import MIN_CONFIDENCE, ScreenshotExtraction
 from services import formatting, ocr
+from services.ghl import PICKLIST_VALUES, CustomField
 from services.calendar import LA_TZ
 
 logger = logging.getLogger(__name__)
@@ -49,10 +50,26 @@ def _system_prompt() -> str:
     )
 
 
-SYSTEM_PROMPT_BODY = f"""You extract moving-job details from screenshots for \
-Splendid Moving, a Los Angeles moving company. Staff paste in screenshots of \
-customer enquiries — Yelp message threads, SMS conversations, emails, web form \
-submissions, handwritten notes — and you turn them into structured data.
+SYSTEM_PROMPT_BODY = f"""You extract moving-job details for Splendid Moving, a \
+Los Angeles moving company, and turn them into structured data.
+
+# Your evidence — two sources, equally authoritative
+
+1. A screenshot of a customer enquiry: a Yelp thread, an SMS conversation, an \
+email, a web form, a handwritten note. Sometimes there is no screenshot at all.
+2. What the staff member typed alongside it.
+
+The staff member is a dispatcher who has usually already spoken to the \
+customer. They routinely supply exactly what the screenshot does not — the date \
+agreed on the phone, the crew size, a fee — and where the two disagree, THEY \
+are right.
+
+**Every rule below applies to both sources identically.** A value that appears \
+only in what the staff member typed is worth exactly as much as one printed in \
+the image. That includes a relative date you have to work out yourself: \
+"Friday" typed by the dispatcher is a date they have already agreed with the \
+customer, not a vague hint. Quietly downgrading their message to secondary \
+evidence is the single most common way this task goes wrong.
 
 {{context}}
 
@@ -61,7 +78,7 @@ Today is {{today}} — {{today_iso}} — in Los Angeles.
 Tomorrow is {{tomorrow}}, {{tomorrow_date}}.
 
 # Your one job
-Report what is *actually visible*. You are not filling in a form; you are \
+Report what the evidence actually says. You are not filling in a form; you are \
 transcribing evidence.
 
 # The cost of being wrong
@@ -137,11 +154,16 @@ reference is unambiguous, exactly as you would a printed date. Put the original 
 wording in source_text.
 
   "moving tomorrow"      -> {{tomorrow_date}}   confidence 0.95
-  "next Friday"          -> the Friday of next week
+  "Friday"               -> the coming Friday
+  "upcoming Friday"      -> the coming Friday
+  "this Friday"          -> the coming Friday
+  "next Friday"          -> the coming Friday, unless one this week has passed
   "the 14th"             -> the next 14th still in the future
-  "Saturday"             -> the coming Saturday
   "early next month"     -> too vague. Leave blank.
   "sometime in spring"   -> too vague. Leave blank.
+
+A bare weekday from the staff member is NOT vague — they are telling you the \
+day the job is booked for. Resolve it and report 0.9+.
 
 Only drop to low confidence when the reference is genuinely ambiguous (e.g. \
 "next weekend" close to a weekend, or two candidate dates on screen). Reporting \
@@ -155,14 +177,28 @@ already answered.
 **move_size** — studio / 1 bedroom / 2 bedroom / 3 bedroom / 4 bedroom / \
 5 bedroom / other, only if stated.
 
-**source** — where the lead came from, if visible. The Yelp UI in the screenshot \
-is itself good evidence of "Yelp".
+**source** — where the LEAD came from. It is a fixed dropdown, and only these \
+six strings are accepted, spelled exactly:
+
+  Yelp · Google My Business · Thumbtack · Previous Customer ·
+  Local Service Ads · Referral
+
+The Yelp UI in a screenshot is itself good evidence of "Yelp". If what you see \
+is not one of the six, LEAVE IT BLANK. In particular, the messaging app is not \
+the lead source: an SMS thread, an email client or WhatsApp tells you how they \
+are talking to us, not where they came from. "SMS", "Text", "Email" and \
+"Website" are all wrong answers here.
 
 **notes** — operational detail a dispatcher CANNOT get from the other fields: \
 stairs, elevator, walk-up floor number, heavy or unusual items, parking or \
 permit constraints, timing constraints, agreed extra charges (gas fee, long \
 carry). Capture these generously — they are cheap to include and expensive to \
 lose.
+
+FORMAT: one fact per line, each starting with "- ". Never run several facts \
+together in a sentence.
+
+  "- $50 gas fee\\n- Third floor walk-up\\n- Permit needed on the Torrance side"
 
 NEVER restate a value that already has its own field. These notes are printed \
 on the calendar event directly beneath the date, the addresses, the crew size \
@@ -180,7 +216,7 @@ every single job, and it is the most common way this field goes wrong.
   nothing operational in the image
     notes = blank                                              correct
 
-# When the image has nothing useful
+# When the evidence has nothing useful
 Return the empty schema with all confidences at 0.0. That is a valid, useful \
 answer — do not manufacture plausible-looking data to fill it."""
 
@@ -289,8 +325,18 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     # and duplicate detection work on consistent values.
     if intake.get("phone"):
         intake["phone"] = formatting.format_phone(intake["phone"])
+    # The dropdown has six options and the model reaches for others — "SMS" and
+    # "Text" turn up whenever the screenshot is a messaging app. GHL accepts a
+    # bad value and silently discards it, and it would meanwhile go on the
+    # calendar's Source: line, which four other repos read. Blank beats wrong.
     if intake.get("source"):
-        intake["source"] = formatting.normalize_source(intake["source"])
+        normalized = formatting.normalize_source(intake["source"])
+        if normalized in PICKLIST_VALUES[CustomField.ORIGIN]:
+            intake["source"] = normalized
+        else:
+            logger.info("Discarding invented lead source %r", intake["source"])
+            intake.pop("source")
+            confidence["source"] = 0.0
 
     if extraction.is_labor is not None:
         intake["is_labor"] = extraction.is_labor
@@ -298,7 +344,7 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     # Extraction notes seed job_notes but do NOT count as having asked — the
     # user is still prompted, because extra charges are agreed with staff and
     # will not be in a customer's screenshot.
-    if extraction.notes.is_usable and (note := extraction.notes.value.strip()):
+    if extraction.notes.is_usable and (note := formatting.format_notes(extraction.notes.value)):
         intake["job_notes"] = note
 
     return intake, confidence
@@ -310,6 +356,30 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
 #: ledger skips the actions that already succeeded. Clearing state on a retry
 #: would re-run all four and double-book the customer.
 _RETRY_WORDS = {"retry", "try again", "run it again", "re-run", "rerun", "resend"}
+
+
+def _recover_date(intake: dict, confidence: dict, accompanying: str) -> None:
+    """
+    Fill a missing move date from a weekday the dispatcher typed.
+
+    Only from what THEY wrote, never from the image: "Friday" in the customer's
+    own chat log could be any Friday, but a dispatcher typing it alongside a
+    screenshot is telling us the day the job is booked for.
+
+    Only when the model produced nothing. It usually resolves these itself; when
+    it does not it returns null rather than a guess, and the agent then asks for
+    a date that was already on screen.
+    """
+    if intake.get("move_date") or not accompanying:
+        return
+
+    resolved = formatting.resolve_relative_date(accompanying, datetime.now(LA_TZ))
+    if resolved is None:
+        return
+
+    intake["move_date"] = formatting.format_date(resolved)
+    confidence["move_date"] = 1.0
+    logger.info("Resolved %r to %s in code", accompanying[:60], intake["move_date"])
 
 
 def _is_new_job(state: OpsAgentState, has_image: bool, text: str) -> bool:
@@ -384,10 +454,11 @@ def extract_screenshot(state: OpsAgentState) -> dict:
             extraction = model.invoke([
                 SystemMessage(content=_system_prompt()),
                 HumanMessage(content=(
-                    "There is no screenshot. Extract the job details from this message "
-                    "written by a staff member. Treat it exactly as you would text read "
-                    "out of an image — report only what is stated, leave the rest blank.\n\n"
-                    f"{accompanying}"
+                    "EVIDENCE — what the staff member typed. There is no screenshot, so "
+                    "this is the whole of it. Apply every field rule to this text exactly "
+                    "as you would to an image: report what is stated, work out anything "
+                    "that needs working out, and leave the rest blank.\n\n"
+                    f"  {accompanying}"
                 )),
             ])
         except Exception:
@@ -395,6 +466,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
             return {"intake": carried, "field_confidence": {}, **reset}
 
         intake, confidence = _to_intake(extraction)
+        _recover_date(intake, confidence, accompanying)
         merged = {**intake, **carried}
         progress.done(f"Picked up {len(intake)} details")
         logger.info("Extracted %d usable fields from text", len(intake))
@@ -408,7 +480,20 @@ def extract_screenshot(state: OpsAgentState) -> dict:
     progress.working("Reading the screenshot\u2026")
     ocr_text = _ocr_text(images)
 
-    instructions = "Extract the moving-job details from this screenshot."
+    # The staff member's message goes FIRST and is labelled as evidence in its
+    # own right. Appending it as "the staff member also wrote…" reliably lost
+    # anything that needed working out rather than copying: a date typed as
+    # "Friday" came back null, while the same message presented this way
+    # resolves to a date at 0.9 confidence.
+    instructions = "Extract the moving-job details from the evidence below."
+    if accompanying:
+        instructions += (
+            "\n\nEVIDENCE 1 — what the staff member typed. Apply every field rule "
+            "to this text exactly as you would to the image, and prefer it over "
+            "the image wherever the two disagree:\n\n"
+            f"  {accompanying}"
+        )
+    instructions += f"\n\nEVIDENCE {'2' if accompanying else '1'} — the attached screenshot."
     if ocr_text:
         instructions += (
             "\n\nBelow is the EXACT text an OCR engine read from this same image. "
@@ -419,12 +504,6 @@ def extract_screenshot(state: OpsAgentState) -> dict:
             "come out subtly wrong.\n\n"
             f"--- OCR TEXT ---\n{ocr_text}\n--- END OCR TEXT ---"
         )
-    if accompanying:
-        instructions += (
-            f"\n\nThe staff member also wrote: {accompanying!r} — treat this as "
-            "additional evidence, and prefer it over the image where they conflict."
-        )
-
     content: list[dict] = [{"type": "text", "text": instructions}, *images]
 
     try:
@@ -435,6 +514,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
         return {"intake": dict(state.get("intake") or {}), "field_confidence": {}}
 
     intake, confidence = _to_intake(extraction)
+    _recover_date(intake, confidence, accompanying)
 
     # Deterministic backstop. The prompt above asks the model to defer to OCR;
     # this enforces it for the two fields where a single wrong character is
