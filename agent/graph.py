@@ -82,6 +82,7 @@ def build_graph(checkpointer=None):
     builder.add_node("act_calendar", actions.act_calendar_event)
     builder.add_node("act_invoice", actions.act_deposit_invoice)
     builder.add_node("act_email", actions.act_confirmation_email)
+    builder.add_node("act_sms", actions.act_customer_sms)
     builder.add_node("report", actions.report)
 
     builder.add_edge(START, "router")
@@ -119,9 +120,16 @@ def build_graph(checkpointer=None):
 
     # These three are independent and run in parallel. The ledger's merge
     # reducer is what keeps their three writes from overwriting each other.
+    #
+    # They converge on act_sms, which texts the customer to say the confirmation
+    # email and the deposit link both went out. It sits here, behind all three,
+    # for the obvious reason: it can only say that once it is true. A node with
+    # several inbound edges waits for all of them, so this is the join — and it
+    # skips itself, rather than failing, when there is nothing true to say.
     for node in actions.FAN_OUT:
-        builder.add_edge(node, "report")
+        builder.add_edge(node, "act_sms")
 
+    builder.add_edge("act_sms", "report")
     builder.add_edge("report", END)
     builder.add_edge("give_up", END)
 

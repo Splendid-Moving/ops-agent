@@ -1,13 +1,14 @@
 """
-NODES: the four side effects, plus reconcile and report.
+NODES: the five side effects, plus reconcile and report.
 
-    act_upsert_contact   -> GHL contact          (gate: the other three need its id)
-    act_calendar_event   -> Google Calendar event
-    act_deposit_invoice  -> GHL invoice, texted to the customer
+    act_upsert_contact     -> GHL contact        (gate: everything after needs its id)
+    act_calendar_event     -> Google Calendar event
+    act_deposit_invoice    -> GHL invoice, texted to the customer
     act_confirmation_email -> GHL email
+    act_customer_sms       -> GHL text, ONLY if the two above both went out
 
-These live in one module because they share the idempotency guard below. Four
-copies of the same latch is four chances to forget it, and forgetting it means
+These live in one module because they share the idempotency guard below. Five
+copies of the same latch is five chances to forget it, and forgetting it means
 charging a customer twice.
 
 THE RULE EVERY NODE HERE FOLLOWS
@@ -16,7 +17,7 @@ Check the ledger first. If this action already succeeded, do nothing and return.
 That is what makes a retry safe: re-running the whole execute stage after a
 partial failure re-fires only the parts that failed.
 
-All four run strictly AFTER the confirm interrupt, so they are reached exactly
+All five run strictly AFTER the confirm interrupt, so they are reached exactly
 once per approval. Nothing here may ever move above an interrupt().
 """
 
@@ -34,6 +35,7 @@ from agent.state import (
     ACTION_CONTACT,
     ACTION_EMAIL,
     ACTION_INVOICE,
+    ACTION_SMS,
     ALL_ACTIONS,
     OpsAgentState,
     failed_actions,
@@ -44,6 +46,18 @@ from services import calendar, config, formatting, ghl, maps, rates
 from services.ghl import CustomField
 
 logger = logging.getLogger(__name__)
+
+
+class ActionSkipped(Exception):
+    """
+    Raised by an action that does not apply on this run. NOT a failure.
+
+    The difference matters twice over. A skip is not reported as something that
+    went wrong, and — because it is recorded as "skipped" rather than "success"
+    — it is re-evaluated on a retry. Recording a skip as success would be the
+    worse bug of the two: the text that was held back because the email failed
+    would then never be sent, even after the email went out on the retry.
+    """
 
 
 def job_fingerprint(intake: dict) -> str:
@@ -76,17 +90,20 @@ def action(name: str) -> Callable:
                 return {}
 
             attempts = ledger.get(name, {}).get("attempts", 0) + 1
+
             try:
                 result = fn(state)
-                logger.info("%s ok: %s", name, result)
-                progress.done(_DONE_TEXT.get(name, f"{name} done"))
+            except ActionSkipped as why:
+                # Not an attempt — nothing was tried, so the count does not move
+                # and a retry will look at it again.
+                logger.info("%s skipped: %s", name, why)
                 return {
                     "ledger": {
                         name: {
-                            "status": "success",
-                            "result": result,
-                            "error": None,
-                            "attempts": attempts,
+                            "status": "skipped",
+                            "result": {},
+                            "error": str(why),
+                            "attempts": attempts - 1,
                         }
                     }
                 }
@@ -105,6 +122,19 @@ def action(name: str) -> Callable:
                     }
                 }
 
+            logger.info("%s ok: %s", name, result)
+            progress.done(_DONE_TEXT.get(name, f"{name} done"))
+            return {
+                "ledger": {
+                    name: {
+                        "status": "success",
+                        "result": result,
+                        "error": None,
+                        "attempts": attempts,
+                    }
+                }
+            }
+
         return wrapper
 
     return decorator
@@ -115,6 +145,7 @@ _DONE_TEXT = {
     ACTION_CALENDAR: "Job added to the calendar",
     ACTION_INVOICE: "Deposit payment link texted",
     ACTION_EMAIL: "Confirmation email sent",
+    ACTION_SMS: "Customer texted that both went out",
 }
 
 _LABELS_SHORT = {
@@ -122,6 +153,7 @@ _LABELS_SHORT = {
     ACTION_CALENDAR: "Calendar event",
     ACTION_INVOICE: "Deposit link",
     ACTION_EMAIL: "Confirmation email",
+    ACTION_SMS: "Customer text",
 }
 
 
@@ -269,6 +301,55 @@ def act_confirmation_email(state: OpsAgentState) -> dict:
     )
 
 
+# ── 5. Tell the customer both went out ─────────────────────────────────────────
+
+#: What the customer receives. One line, because it is a receipt rather than a
+#: message that wants a reply.
+CUSTOMER_SMS = "Hi {first_name}, the confirmation email & deposit link have been sent!"
+
+
+def first_name(intake: dict) -> str:
+    """
+    What to call them in the text.
+
+    Substituted here rather than left as a merge field for GoHighLevel to fill
+    in: merge fields are resolved for workflows and templates, and this goes out
+    through /conversations/messages, which sends exactly the characters it is
+    given. A customer receiving "Hi {first_name}," is worse than no text at all.
+    """
+    parts = str(intake.get("full_name") or "").split()
+    return parts[0] if parts else "there"
+
+
+@action(ACTION_SMS)
+def act_customer_sms(state: OpsAgentState) -> dict:
+    """
+    Only once BOTH the confirmation email and the deposit link have gone out.
+
+    The text says two specific things happened, so sending it when one of them
+    did not is telling the customer something untrue — and the one thing worse
+    than a booking half-completed is a customer who has been told it wasn't.
+    """
+    ledger = state.get("ledger") or {}
+
+    missing = [
+        _LABELS_SHORT[name]
+        for name in (ACTION_EMAIL, ACTION_INVOICE)
+        if not succeeded(ledger, name)
+    ]
+    if missing:
+        raise ActionSkipped(f"{' and '.join(missing)} didn't go out")
+
+    contact_id = _contact_id(state)
+    if not contact_id:
+        raise RuntimeError("No contact id — cannot text without a contact.")
+
+    progress.working("Texting the customer to say both went out…")
+    intake = state.get("intake") or {}
+    message = CUSTOMER_SMS.format(first_name=first_name(intake))
+    return {"message": message, **ghl.send_sms(contact_id, message)}
+
+
 # ── Reconcile + report ─────────────────────────────────────────────────────────
 
 _LABELS = {
@@ -276,11 +357,16 @@ _LABELS = {
     ACTION_CALENDAR: "Calendar event",
     ACTION_INVOICE: "Deposit invoice (texted)",
     ACTION_EMAIL: "Confirmation email",
+    ACTION_SMS: "Text to the customer",
 }
 
 
 #: Run in parallel once the contact exists. Independent of each other, so one
 #: failing does not stop the other two.
+#:
+#: act_sms is NOT among them. It reports on two of these three, so it has to
+#: wait for them — it runs after all three converge, and decides for itself
+#: whether there is anything true to say.
 FAN_OUT = ["act_calendar", "act_invoice", "act_email"]
 
 
@@ -316,7 +402,7 @@ def report(state: OpsAgentState) -> dict:
     if not failed:
         lines.append(f"Done. {name} is booked.")
     else:
-        lines.append(f"Partly done — {len(failed)} of 4 steps failed.")
+        lines.append(f"Partly done — {len(failed)} of {len(ALL_ACTIONS)} steps failed.")
 
     for act in ALL_ACTIONS:
         entry = ledger.get(act, {})
@@ -333,6 +419,10 @@ def report(state: OpsAgentState) -> dict:
             lines.append(f"  ✓ {label}" + (f"  ({detail})" if detail and not dry else ""))
         elif status == "failed":
             lines.append(f"  ✗ {label} — {entry.get('error', 'unknown error')}")
+        elif status == "skipped":
+            # Deliberately held back, not broken. Says why, because "not
+            # attempted" on its own reads like something went wrong.
+            lines.append(f"  — {label} not sent: {entry.get('error', 'did not apply')}")
         else:
             lines.append(f"  — {label} not attempted")
 

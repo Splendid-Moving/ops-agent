@@ -13,15 +13,18 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 # ── Action names ───────────────────────────────────────────────────────────────
-# The four side effects, in dependency order. upsert_contact runs first and
-# alone because the other three need the contact id it returns.
+# The five side effects, in dependency order. upsert_contact runs first and
+# alone because everything after it needs the contact id it returns, and
+# customer_sms runs last because it tells the customer that two of the others
+# happened — so it can only be sent once they have.
 
 ACTION_CONTACT = "upsert_contact"
 ACTION_CALENDAR = "calendar_event"
 ACTION_INVOICE = "deposit_invoice"
 ACTION_EMAIL = "confirmation_email"
+ACTION_SMS = "customer_sms"
 
-ALL_ACTIONS = (ACTION_CONTACT, ACTION_CALENDAR, ACTION_INVOICE, ACTION_EMAIL)
+ALL_ACTIONS = (ACTION_CONTACT, ACTION_CALENDAR, ACTION_INVOICE, ACTION_EMAIL, ACTION_SMS)
 
 ActionStatus = Literal["pending", "success", "failed", "skipped"]
 

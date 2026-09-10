@@ -31,7 +31,7 @@ are writing a state machine by hand, badly.
 genuinely stop mid-execution and resume at the same spot later. Everything else
 it gives you is convenience; this is the part you cannot easily build yourself.
 
-The second problem shows up right after: those four API calls hit three
+The second problem shows up right after: those API calls hit three
 different companies' servers. One of them *will* fail while the others succeed.
 A booking that half-happens — customer texted a payment link for a truck that
 was never scheduled — is worse than one that fails outright. Part 5 covers how
@@ -446,7 +446,7 @@ The valuable thinking in this project was not the LangGraph API. It was asking,
 repeatedly: **what does this look like when it fails?**
 
 Every design decision that earned its keep came from that question. The ledger
-exists because four API calls fail independently. The dry-run switch exists
+exists because those API calls fail independently. The dry-run switch exists
 because "test it in production" means texting a real customer. The tests cluster
 around silent failures because loud ones announce themselves.
 

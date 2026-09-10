@@ -1,5 +1,5 @@
 """
-The four side effects: idempotency, partial failure, and precise retry.
+The five side effects: idempotency, partial failure, and precise retry.
 
 These are the highest-value tests in the project. Everything else produces a
 wrong answer when it breaks; these produce a customer charged twice, or a truck
@@ -14,6 +14,7 @@ from agent.state import (
     ACTION_CONTACT,
     ACTION_EMAIL,
     ACTION_INVOICE,
+    ACTION_SMS,
     ALL_ACTIONS,
     failed_actions,
     merge_ledger,
@@ -57,6 +58,7 @@ def spy(monkeypatch):
     monkeypatch.setattr(ghl, "create_invoice", counted("invoice", {"invoice_id": "i1"}))
     monkeypatch.setattr(ghl, "send_invoice", counted("send_invoice", {"sent": True}))
     monkeypatch.setattr(ghl, "send_email", counted("email", {"sent": True}))
+    monkeypatch.setattr(ghl, "send_sms", counted("sms", {"sent": True}))
     monkeypatch.setattr(calendar, "create_event", counted("event", {"event_id": "e1", "html_link": "x"}))
     monkeypatch.setattr(actions.maps, "get_distance", lambda *a, **k: "8.2 miles")
     return calls
@@ -85,16 +87,18 @@ def test_a_succeeded_action_never_runs_twice(intake, spy):
 def test_every_action_is_individually_idempotent(intake, spy):
     state = {"intake": intake, "ledger": new_ledger()}
 
-    for node in (actions.act_upsert_contact, actions.act_calendar_event,
-                 actions.act_deposit_invoice, actions.act_confirmation_email):
+    every = (actions.act_upsert_contact, actions.act_calendar_event,
+             actions.act_deposit_invoice, actions.act_confirmation_email,
+             actions.act_customer_sms)
+
+    for node in every:
         update = node(state)
         state["ledger"] = merge_ledger(state["ledger"], update["ledger"])
 
     counts = dict(spy)
 
-    # Second pass over all four — nothing should move.
-    for node in (actions.act_upsert_contact, actions.act_calendar_event,
-                 actions.act_deposit_invoice, actions.act_confirmation_email):
+    # Second pass over all five — nothing should move.
+    for node in every:
         assert node(state) == {}
 
     assert dict(spy) == counts, "an action re-fired on the second pass"
@@ -288,3 +292,120 @@ def test_report_is_unambiguous_about_full_success(intake):
     text = actions.report({"intake": intake, "ledger": ledger})["messages"][0].content
     assert "Done" in text
     assert "✗" not in text
+
+
+# ── The text to the customer ───────────────────────────────────────────────────
+# It says two specific things have happened. Sending it when one of them has not
+# is telling a customer something untrue about their own booking, so the rule it
+# has to keep is "both, or neither".
+
+def _ledger_with(**statuses):
+    """A ledger where each named action has the given status."""
+    ledger = new_ledger()
+    updates = {
+        ACTION_CONTACT: {"status": "success", "result": {"contact_id": "c1"},
+                         "error": None, "attempts": 1},
+    }
+    for action_name, status in statuses.items():
+        updates[action_name] = {
+            "status": status,
+            "result": {"ok": True} if status == "success" else {},
+            "error": None if status == "success" else "boom",
+            "attempts": 1,
+        }
+    return merge_ledger(ledger, updates)
+
+
+def test_the_customer_is_texted_once_both_have_gone_out(intake, spy):
+    state = {"intake": intake,
+             "ledger": _ledger_with(**{ACTION_EMAIL: "success", ACTION_INVOICE: "success"})}
+
+    update = actions.act_customer_sms(state)
+
+    assert spy["sms"] == 1
+    entry = update["ledger"][ACTION_SMS]
+    assert entry["status"] == "success"
+    assert entry["result"]["message"] == (
+        "Hi Sarah, the confirmation email & deposit link have been sent!"
+    )
+
+
+@pytest.mark.parametrize(
+    "email,invoice",
+    [("failed", "success"), ("success", "failed"), ("failed", "failed"),
+     ("pending", "success"), ("success", "pending")],
+)
+def test_nothing_is_texted_unless_both_went_out(intake, spy, email, invoice):
+    state = {"intake": intake,
+             "ledger": _ledger_with(**{ACTION_EMAIL: email, ACTION_INVOICE: invoice})}
+
+    update = actions.act_customer_sms(state)
+
+    assert "sms" not in spy, "texted the customer that something happened when it hadn't"
+    assert update["ledger"][ACTION_SMS]["status"] == "skipped"
+
+
+def test_a_skipped_text_is_not_reported_as_a_failure(intake, spy):
+    state = {"intake": intake,
+             "ledger": _ledger_with(**{ACTION_EMAIL: "failed", ACTION_INVOICE: "success"})}
+    ledger = merge_ledger(state["ledger"], actions.act_customer_sms(state)["ledger"])
+
+    assert ACTION_SMS not in failed_actions(ledger)
+    assert "Confirmation email" in ledger[ACTION_SMS]["error"], "should say what it waited on"
+
+
+def test_a_skip_is_reconsidered_on_a_retry(intake, spy):
+    """
+    The bug this guards against would be silent and permanent: if a held-back
+    text were recorded as done, the customer would never be told — not even
+    after the retry that finally sent the email.
+    """
+    state = {"intake": intake,
+             "ledger": _ledger_with(**{ACTION_EMAIL: "failed", ACTION_INVOICE: "success"})}
+    ledger = merge_ledger(state["ledger"], actions.act_customer_sms(state)["ledger"])
+    assert "sms" not in spy
+
+    # The operator says "retry", and the email goes out this time.
+    ledger = merge_ledger(ledger, {ACTION_EMAIL: {"status": "success", "result": {},
+                                                 "error": None, "attempts": 2}})
+    update = actions.act_customer_sms({"intake": intake, "ledger": ledger})
+
+    assert spy["sms"] == 1, "the text was never sent, even once it was true"
+    assert update["ledger"][ACTION_SMS]["status"] == "success"
+
+
+def test_a_sent_text_is_never_sent_twice(intake, spy):
+    state = {"intake": intake,
+             "ledger": _ledger_with(**{ACTION_EMAIL: "success", ACTION_INVOICE: "success"})}
+    state["ledger"] = merge_ledger(state["ledger"], actions.act_customer_sms(state)["ledger"])
+
+    assert actions.act_customer_sms(state) == {}
+    assert spy["sms"] == 1
+
+
+@pytest.mark.parametrize(
+    "full_name,expected",
+    [("Sarah Chen", "Sarah"), ("Nik", "Nik"), ("  Jordan  Lee ", "Jordan"),
+     ("", "there"), (None, "there")],
+)
+def test_the_greeting_uses_their_first_name(full_name, expected):
+    """
+    Substituted here, not left for GoHighLevel: this goes out through
+    /conversations/messages, which sends the characters it is given. A customer
+    reading "Hi {first_name}," is worse than no text at all.
+    """
+    assert actions.first_name({"full_name": full_name}) == expected
+    assert "{" not in actions.CUSTOMER_SMS.format(first_name=expected)
+
+
+def test_the_report_counts_all_five_steps_and_explains_a_skip(intake, spy):
+    ledger = _ledger_with(**{ACTION_CALENDAR: "success", ACTION_EMAIL: "failed",
+                             ACTION_INVOICE: "success"})
+    ledger = merge_ledger(ledger, actions.act_customer_sms(
+        {"intake": intake, "ledger": ledger})["ledger"])
+
+    text = actions.report({"intake": intake, "ledger": ledger})["messages"][0].content
+
+    assert f"of {len(ALL_ACTIONS)} steps failed" in text
+    assert "1 of 5" in text, "a skipped text is not a failed step"
+    assert "Text to the customer" in text and "not sent" in text

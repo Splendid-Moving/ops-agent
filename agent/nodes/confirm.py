@@ -9,9 +9,10 @@ formatting, the interrupt, and the routing decision. No API calls, no writes,
 nothing that could fire twice — because on every resume this node re-runs from
 the top.
 
-This is the last checkpoint before four irreversible things happen: a CRM
-contact, a calendar booking, an invoice text to the customer, and a confirmation
-email. Everything shown here should be everything that will happen.
+This is the last checkpoint before five irreversible things happen: a CRM
+contact, a calendar booking, an invoice text to the customer, a confirmation
+email, and a text telling the customer the last two went out. Everything shown
+here should be everything that will happen.
 """
 
 import logging
@@ -67,6 +68,7 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
         "  2. Book the calendar event",
         f"  3. Text them a ${deposit:.0f} deposit invoice",
         "  4. Send the confirmation email",
+        "  5. Text them to say the email and the deposit link have gone out",
     ]
 
     # Anything Google couldn't confirm outright — the wrong-city failure mode.

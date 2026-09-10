@@ -33,7 +33,7 @@ what it can do. Both also work typed as plain words (`reset`, `start over`).
 
 ## The one thing to understand
 
-The hard part was never the four API calls. It is **never half-completing
+The hard part was never the five API calls. It is **never half-completing
 them**.
 
 A misread screenshot or a mid-flight failure must not leave a customer holding

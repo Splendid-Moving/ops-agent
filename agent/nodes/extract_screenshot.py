@@ -354,7 +354,7 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
 #:
 #: A retry deliberately reuses the existing intake and ledger — that is how the
 #: ledger skips the actions that already succeeded. Clearing state on a retry
-#: would re-run all four and double-book the customer.
+#: would re-run all five and double-book the customer.
 _RETRY_WORDS = {"retry", "try again", "run it again", "re-run", "rerun", "resend"}
 
 

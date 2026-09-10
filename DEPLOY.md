@@ -151,8 +151,8 @@ Only after you've watched a full booking work in dry run:
 
 1. Set `DRY_RUN=false` in Railway.
 2. Do **one** real booking using your own phone and email as the customer.
-3. Check all four things landed: GoHighLevel contact, calendar event, deposit
-   text, confirmation email.
+3. Check all five things landed: GoHighLevel contact, calendar event, deposit
+   text, confirmation email, and the text saying the last two went out.
 4. Delete the test artifacts.
 
 ---
