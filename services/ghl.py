@@ -153,6 +153,26 @@ def normalize_phone(phone: str) -> str:
     return digits[-10:] if len(digits) >= 10 else digits
 
 
+def normalize_email(email: str) -> str:
+    """
+    Trimmed and lowercased — the form GHL stores, and therefore the only form
+    that still matches on the way back out.
+
+    GHL normalises an address when it saves it onto a contact, but compares
+    `emailTo` on /conversations/messages against the stored value verbatim. A
+    contact created from a screenshot reading "Sarah@Gmail.com" is stored as
+    sarah@gmail.com, so sending to the address exactly as the customer wrote it
+    comes back 400 CONVERSATIONS_MSG_INVALID_EMAILTO — "not under contact's
+    primary or additional emails" — about what is plainly the same address.
+    Phones typed into a text thread are auto-capitalised, so leads arrive this
+    way constantly.
+
+    Every address this module hands to GHL goes through here, so what gets
+    written and what gets sent to can never disagree on case or whitespace.
+    """
+    return str(email or "").strip().lower()
+
+
 # ── Tracing ────────────────────────────────────────────────────────────────────
 # Every function below that touches the GHL API is wrapped in @traceable, so it
 # shows as its own step inside the LangSmith trace for the run that called it,
@@ -200,7 +220,7 @@ def find_contact_by_phone(phone: str) -> dict[str, Any] | None:
 @traceable(run_type="tool", name="ghl.find_contact_by_email")
 def find_contact_by_email(email: str) -> dict[str, Any] | None:
     """Search contacts by email, re-checked exactly the way the phone search is."""
-    target = (email or "").strip().lower()
+    target = normalize_email(email)
     if not target:
         return None
 
@@ -214,7 +234,7 @@ def find_contact_by_email(email: str) -> dict[str, Any] | None:
         raise GHLError("Contact search failed", resp.status_code, resp.text)
 
     for contact in resp.json().get("contacts", []):
-        if (contact.get("email") or "").strip().lower() == target:
+        if normalize_email(contact.get("email", "")) == target:
             return contact
     return None
 
@@ -230,6 +250,25 @@ def contact_display_name(contact: dict[str, Any]) -> str:
         (contact.get("contactName") or "").strip()
         or f"{contact.get('firstName', '')} {contact.get('lastName', '')}".strip()
     )
+
+
+def contact_emails(contact: dict[str, Any]) -> list[str]:
+    """
+    Every address GHL will accept as `emailTo` for this contact, primary first.
+
+    `additionalEmails` arrives as bare strings on some endpoints and as
+    {"email": ...} objects on others, so both shapes are read rather than
+    assumed.
+    """
+    raw = [contact.get("email") or ""]
+    for extra in contact.get("additionalEmails") or []:
+        raw.append(extra.get("email", "") if isinstance(extra, dict) else str(extra))
+
+    ordered: list[str] = []
+    for email in (normalize_email(e) for e in raw):
+        if email and email not in ordered:
+            ordered.append(email)
+    return ordered
 
 
 def _custom_field_value(contact: dict[str, Any], field_id: str) -> str:
@@ -347,7 +386,9 @@ def upsert_contact(
         "lastName": last_name,
         "name": f"{first_name} {last_name}".strip(),
         "phone": phone,
-        "email": email,
+        # Normalised, because this is the value every later emailTo is checked
+        # against. See normalize_email.
+        "email": normalize_email(email),
         "locationId": config.ghl_location_id(),
         "tags": tags or ["ops-agent"],
         "customFields": [
@@ -563,6 +604,21 @@ def send_email(
     """
     Send an email through GHL so it lands on the contact's conversation record.
 
+    `email_to` is a request to use one specific address, not a free-form
+    recipient: GHL refuses to deliver to anything that is not already the
+    contact's primary or one of its additional emails, with
+
+        400 CONVERSATIONS_MSG_INVALID_EMAILTO
+        "Cannot send message as emailTo is not under contact's primary or
+         additional emails"
+
+    Two things keep that error away. The address is normalised, so a customer
+    who wrote "Sarah@Gmail.com" still matches the sarah@gmail.com GHL stored
+    (see normalize_email). And when it turns out to BE the contact's primary
+    address — the ordinary case, since the same address created the contact
+    moments earlier — the field is left off entirely: with nothing to validate,
+    GHL delivers to the primary, which is the address we wanted.
+
     NOTE: the exact field set for type=Email is not rendered in GHL's public docs.
     This payload is the documented shape; verify_services.py exercises it against a
     test contact before Phase 4 depends on it.
@@ -577,12 +633,33 @@ def send_email(
         "subject": subject,
         "html": html,
     }
+
+    on_file: list[str] = []
     if email_to:
-        payload["emailTo"] = email_to
+        contact = get_contact(contact_id)
+        on_file = contact_emails(contact)
+        # Compared against the primary specifically, not merely against "some
+        # address on the record": dropping the field sends to the primary, so a
+        # contact whose primary is blank and whose only address is an
+        # additional one still has to name it.
+        target = normalize_email(email_to)
+        if target and target != normalize_email(contact.get("email", "")):
+            payload["emailTo"] = target
 
     resp = requests.post(
         _url("/conversations/messages"), headers=_headers(), json=payload, timeout=_TIMEOUT
     )
     if not resp.ok:
+        # GHL's own wording for this one names a field the dispatcher has never
+        # heard of and does not say which addresses it would have accepted.
+        if "CONVERSATIONS_MSG_INVALID_EMAILTO" in (resp.text or ""):
+            raise GHLError(
+                f"Email not sent: GHL only delivers to an address already on the "
+                f"contact. Asked for {normalize_email(email_to)!r}; contact "
+                f"{contact_id} has {', '.join(on_file) or 'no email address'} on "
+                f"file. Add the address to that contact in GHL, then retry.",
+                resp.status_code,
+                resp.text,
+            )
         raise GHLError("Email send failed", resp.status_code, resp.text)
     return {"sent": True, "dry_run": False, "response": resp.json()}
