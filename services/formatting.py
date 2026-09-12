@@ -262,9 +262,18 @@ _SOURCE_ALIASES = {
 }
 
 
+#: Answers that mean "there are none". The checklist invites them — "'none' is
+#: fine" — and they are an answer to the question, not a note about the job, so
+#: they must come back empty rather than print "- none" on the calendar.
+_NO_NOTES = frozenset({
+    "none", "no", "no notes", "no note", "nothing", "nothing to add",
+    "nothing else", "nothing special", "n/a", "na", "nope", "no thanks",
+})
+
+
 def format_notes(raw: str) -> str:
     """
-    One fact per line, each prefixed with "- ".
+    One fact per line, each prefixed with "- ". A refusal comes back empty.
 
     Not only cosmetic. Notes land on the lines after "Notes:" in the calendar
     description, which four other repos parse with ^([A-Za-z ]+):\\s*(.*) — so a
@@ -275,12 +284,53 @@ def format_notes(raw: str) -> str:
     if not text:
         return ""
 
+    # Whole-answer check, never per line: "No parking on the street" is a note,
+    # "no notes" is the absence of one.
+    plain = text.strip(" .!-").lower()
+    if not plain or plain in _NO_NOTES:
+        return ""
+
     items = []
     for chunk in text.replace(" | ", "\n").splitlines():
         item = chunk.strip().lstrip("-•*").strip()
         if item:
             items.append(f"- {item}")
     return "\n".join(items)
+
+
+#: A note line is about a deposit at all …
+_DEPOSIT = re.compile(r"\bdeposits?\b", re.I)
+
+#: … and it still earns its place if it says something about THIS deposit that
+#: the standing terms do not.
+_DEPOSIT_NEWS = re.compile(r"\b(paid|prepaid|already|received|collected|waive[ds]?)\b", re.I)
+
+
+def drop_deposit_terms(notes: str) -> str:
+    """
+    Drop a note line that only restates the standing deposit terms.
+
+    Every job takes the same deposit. It is config.deposit_amount(), it is step
+    three of every booking, and the calendar event carries its own `Deposit:`
+    line. So "- $50 deposit required; subtracted from total at end of move"
+    tells a dispatcher nothing they do not already know — it is the quote
+    boilerplate staff send every customer, sitting in the screenshot waiting to
+    be read as an agreed extra charge, and it was landing on the calendar of
+    every job booked from a thread that contained it.
+
+    A line that says something new about this particular deposit — that it has
+    already been paid, or was waived — is kept. That is the case where the
+    dispatcher does need telling.
+
+    Extraction only. What a dispatcher types is taken as written: if they put a
+    deposit in the notes themselves, they meant it.
+    """
+    kept = [
+        line
+        for line in str(notes or "").splitlines()
+        if not (_DEPOSIT.search(line) and not _DEPOSIT_NEWS.search(line))
+    ]
+    return "\n".join(kept)
 
 
 def normalize_source(raw: str) -> str:

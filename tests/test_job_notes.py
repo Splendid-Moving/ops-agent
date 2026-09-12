@@ -120,3 +120,114 @@ def test_an_address_in_a_note_is_not_split_on_its_comma():
     from services import formatting
     assert formatting.format_notes("drop at 1561 W 223rd St, Torrance") == \
         "- drop at 1561 W 223rd St, Torrance"
+
+
+# ── The standing deposit terms ─────────────────────────────────────────────────
+#
+# Every job takes the same deposit: it is config.deposit_amount(), it is step
+# three of every booking, and the calendar event has its own `Deposit:` line.
+# The quote boilerplate staff send every customer sits in the screenshot
+# looking exactly like an agreed extra charge, so it was being captured
+# "generously" and printed on the calendar of every job booked from a thread
+# that contained it.
+
+@pytest.mark.parametrize(
+    "boilerplate",
+    [
+        "$50 deposit required; subtracted from total at end of move",
+        "- $50 deposit required, subtracted from the total at the end of the move",
+        "A $50 deposit is required to book",
+        "Deposit of $50 to reserve the slot, applied to the final balance",
+        "$50 non-refundable deposit",
+    ],
+)
+def test_the_standing_deposit_terms_never_become_a_note(boilerplate):
+    extraction = _extraction(notes={"value": boilerplate, "confidence": 0.95})
+    intake, _ = _to_intake(extraction)
+    assert "job_notes" not in intake
+
+
+def test_a_deposit_already_paid_is_still_worth_a_line():
+    """
+    The one case that is news rather than terms — the dispatcher does need to
+    know this one, so the filter has to be narrower than "any line saying
+    deposit".
+    """
+    extraction = _extraction(
+        notes={"value": "Deposit already paid in cash", "confidence": 0.95}
+    )
+    intake, _ = _to_intake(extraction)
+    assert intake["job_notes"] == "- Deposit already paid in cash"
+
+
+def test_a_real_note_survives_alongside_the_terms():
+    """The terms usually arrive joined to something that is worth keeping."""
+    extraction = _extraction(
+        notes={
+            "value": "- $50 deposit required, subtracted from total\n- Third floor walk-up",
+            "confidence": 0.95,
+        }
+    )
+    intake, _ = _to_intake(extraction)
+    assert intake["job_notes"] == "- Third floor walk-up"
+
+
+def test_dropping_the_terms_leaves_the_field_unset_not_blank():
+    """
+    Same distinction the rest of this file turns on: unset means the checklist
+    still asks, and a dispatcher who has a note can give it.
+    """
+    extraction = _extraction(
+        notes={"value": "$50 deposit required", "confidence": 0.95}
+    )
+    intake, _ = _to_intake(extraction)
+    assert "job_notes" not in intake
+
+
+def test_the_prompt_rules_the_deposit_out_too():
+    """Pinned for the same reason as the restatement rule above."""
+    from agent.nodes import extract_screenshot as node
+    assert "NOT the deposit" in node.SYSTEM_PROMPT_BODY
+
+
+def test_a_dispatcher_who_types_a_deposit_note_is_taken_at_their_word():
+    """
+    The filter is for what the model reads out of a screenshot. A typed note is
+    a deliberate instruction, and nothing here second-guesses it.
+    """
+    from schemas import checklist as cl
+    from services import formatting
+
+    spec = cl.BY_NAME["job_notes"]
+    assert spec.normalizer("$50 deposit collected on site") == (
+        "- $50 deposit collected on site"
+    )
+    assert formatting.format_notes("$50 deposit required") == "- $50 deposit required"
+
+
+# ── "No notes" means no notes ──────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    "answer",
+    ["none", "None.", "no", "No notes", "nothing", "n/a", "nope", "  none  "],
+)
+def test_a_refusal_is_an_empty_field_not_a_note(answer):
+    """
+    The checklist invites "none is fine", so the answer arrives constantly. It
+    answers the question — it is not a fact about the job — and printing
+    "- none" beneath the addresses on the calendar is exactly the noise this
+    whole file exists to keep out.
+    """
+    from services import formatting
+    assert formatting.format_notes(answer) == ""
+
+
+def test_a_note_that_merely_starts_with_no_is_kept():
+    """The check is on the whole answer. "No parking on the street" is a note."""
+    from services import formatting
+    assert formatting.format_notes("No parking on the street") == (
+        "- No parking on the street"
+    )
+    assert formatting.format_notes("No elevator, 3rd floor") == (
+        "- No elevator, 3rd floor"
+    )

@@ -195,6 +195,14 @@ permit constraints, timing constraints, agreed extra charges (gas fee, long \
 carry). Capture these generously — they are cheap to include and expensive to \
 lose.
 
+NOT the deposit. Every job takes the same one, it is arranged automatically, \
+and the calendar event has its own line for it. The quote boilerplate staff \
+send every customer — "$50 deposit required, subtracted from the total at the \
+end of the move" — reads like an agreed charge and is the single most common \
+thing wrongly captured here. It is standing terms, not a job note. Leave it \
+out however it is worded. A deposit already PAID is different, and worth a \
+line.
+
 FORMAT: one fact per line, each starting with "- ". Never run several facts \
 together in a sentence.
 
@@ -213,6 +221,12 @@ every single job, and it is the most common way this field goes wrong.
              1300 Camerons St, Rowland Heights."               wrong — every
                                                                fact but the fee
                                                                is already a field
+  the thread carries the standard "we require a $50 deposit,
+  subtracted from the total at the end of the move"
+    notes = blank                                              correct
+    notes = "$50 deposit required; subtracted from total
+             at end of move"                                   wrong — every job
+                                                               has that deposit
   nothing operational in the image
     notes = blank                                              correct
 
@@ -344,7 +358,12 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     # Extraction notes seed job_notes but do NOT count as having asked — the
     # user is still prompted, because extra charges are agreed with staff and
     # will not be in a customer's screenshot.
-    if extraction.notes.is_usable and (note := formatting.format_notes(extraction.notes.value)):
+    #
+    # Formatted first so the deposit filter sees one fact per line: the terms
+    # usually arrive joined to something worth keeping.
+    if extraction.notes.is_usable and (
+        note := formatting.drop_deposit_terms(formatting.format_notes(extraction.notes.value))
+    ):
         intake["job_notes"] = note
 
     return intake, confidence
