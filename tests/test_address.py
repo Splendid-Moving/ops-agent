@@ -165,3 +165,47 @@ def test_state_mismatch_against_what_the_user_typed_is_flagged():
     result = address.validate("1 Main St, Springfield CA")
     if result.verdict is Verdict.NEEDS_REVIEW:
         assert "CA" in result.note
+
+
+# ── An out-of-state match is not a suggestion ──────────────────────────────────
+
+def test_out_of_state_match_offers_no_suggested_address():
+    """
+    "436 Fairview Ave #32" with no city resolves to Lancaster PA. The confirm
+    gate renders `formatted` as "suggested: …", and suggesting a Pennsylvania
+    street to an LA moving company invites someone to accept it. The match is
+    evidence the city is missing, not a candidate.
+    """
+    from unittest.mock import patch
+
+    from services import address
+
+    fake = {
+        "result": {
+            "address": {
+                "formattedAddress": "436 Fairview Ave #32, Lancaster, PA 17603, USA",
+                "addressComponents": [
+                    {"componentType": "locality", "inferred": True,
+                     "componentName": {"text": "Lancaster"}},
+                    {"componentType": "administrative_area_level_1",
+                     "componentName": {"text": "PA"}},
+                ],
+                "missingComponentTypes": [],
+                "unresolvedTokens": [],
+            },
+            "uspsData": {"standardizedAddress": {"firstAddressLine": "436 FAIRVIEW AVE # 32"}},
+        }
+    }
+
+    class R:
+        ok, status_code = True, 200
+        @staticmethod
+        def json(): return fake
+
+    with patch.object(address.requests, "post", return_value=R()):
+        v = address.validate("436 Fairview Ave #32")
+
+    assert v.verdict is address.Verdict.NEEDS_REVIEW
+    assert v.formatted == ""
+    assert "Which city" in v.note
+    assert "pickup is in" in v.note        # tells them how to answer

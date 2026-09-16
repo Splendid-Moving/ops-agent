@@ -298,15 +298,19 @@ def validate(address: str, *, region: str = "US") -> ValidatedAddress:
     # interrupting for; flagging it taught staff to click through warnings,
     # which is how the one that matters gets missed.
     if inferred_location and resolved_state and resolved_state != HOME_STATE:
+        # `formatted` is deliberately left EMPTY here. The confirm gate shows
+        # it as "suggested: …", and suggesting a street in Pennsylvania to an
+        # LA moving company is an invitation to accept it. The out-of-state
+        # result is evidence that the city is missing, not a candidate.
         return ValidatedAddress(
             verdict=Verdict.NEEDS_REVIEW,
-            formatted=formatted,
+            formatted="",
             original=original,
             inferred=inferred_location,
             note=(
-                f"{original!r} has no city, and Google placed it in "
-                f"{resolved_state}: {formatted!r}. That's outside the service "
-                "area — confirm the city before booking."
+                f"{original!r} has no city. Which city is it in? "
+                f"(Without one, Google's best match was in {resolved_state} — "
+                "clearly not it.) Reply with e.g. 'pickup is in Arcadia'."
             ),
         )
 

@@ -189,11 +189,14 @@ the lead source: an SMS thread, an email client or WhatsApp tells you how they \
 are talking to us, not where they came from. "SMS", "Text", "Email" and \
 "Website" are all wrong answers here.
 
-**notes** — operational detail a dispatcher CANNOT get from the other fields: \
-stairs, elevator, walk-up floor number, heavy or unusual items, parking or \
-permit constraints, timing constraints, agreed extra charges (gas fee, long \
-carry). Capture these generously — they are cheap to include and expensive to \
-lose.
+**notes** — ONLY what the staff member typed. Never from the screenshot.
+
+The screenshot is the customer talking; the notes are the dispatcher's own \
+record of what was agreed. A customer mentioning stairs in a Yelp message is \
+not yet a job note — the dispatcher decides what goes on the job sheet, and \
+they will be asked. So: if the staff member typed nothing, notes are blank, \
+however much the screenshot says. If they typed "$50 gas fee", that is the \
+note, and nothing from the image is added to it.
 
 FORMAT: one fact per line, each starting with "- ". Never run several facts \
 together in a sentence.
@@ -281,6 +284,13 @@ def _apply_ocr_corrections(intake: dict, ocr_text: str) -> list[str]:
     return notes
 
 
+#: What every channel puts in the text slot when the user sent only an image.
+#: It is not evidence and must not be treated as the dispatcher having typed
+#: something — that would show the model "EVIDENCE 1: Book this job." and
+#: defeat the no-notes-without-text rule.
+IMAGE_ONLY_PLACEHOLDER = "Book this job."
+
+
 def _image_parts(message) -> list[dict]:
     content = getattr(message, "content", None)
     if not isinstance(content, list):
@@ -358,6 +368,18 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
 _RETRY_WORDS = {"retry", "try again", "run it again", "re-run", "rerun", "resend"}
 
 
+def _drop_screenshot_notes(intake: dict, accompanying: str) -> None:
+    """
+    Notes come from the dispatcher, not the customer.
+
+    The prompt says so; this makes it true when the model disagrees. With no
+    accompanying text there is nowhere legitimate for a note to have come
+    from, so anything present was lifted from the screenshot and goes.
+    """
+    if not accompanying.strip() and intake.pop("job_notes", None):
+        logger.info("Dropped notes extracted from the screenshot — nothing was typed.")
+
+
 def _recover_date(intake: dict, confidence: dict, accompanying: str) -> None:
     """
     Fill a missing move date from a weekday the dispatcher typed.
@@ -427,6 +449,8 @@ def extract_screenshot(state: OpsAgentState) -> dict:
     last = messages[-1]
     images = _image_parts(last)
     accompanying = _text_of(last)
+    if accompanying.strip() == IMAGE_ONLY_PLACEHOLDER:
+        accompanying = ""
 
     # Decided once, before any extraction: is this a new job or a continuation?
     # `carried` is what survives from the previous turn — nothing, if new.
@@ -515,6 +539,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
 
     intake, confidence = _to_intake(extraction)
     _recover_date(intake, confidence, accompanying)
+    _drop_screenshot_notes(intake, accompanying)
 
     # Deterministic backstop. The prompt above asks the model to defer to OCR;
     # this enforces it for the two fields where a single wrong character is

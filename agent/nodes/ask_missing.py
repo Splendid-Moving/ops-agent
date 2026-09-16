@@ -108,7 +108,21 @@ class ParsedReply(BaseModel):
     )
 
 
-def _parse_prompt(outstanding: list[str], editing: bool) -> str:
+def _current_values(intake: dict) -> str:
+    """The booking as it stands, for the parser to edit against."""
+    lines = []
+    for name, value in intake.items():
+        if value in (None, "", {}) or name.startswith("_") or name in HIDDEN_FIELDS:
+            continue
+        label = cl.BY_NAME[name].label if name in cl.BY_NAME else name
+        if name == "is_labor":
+            value = "labor only" if value else "full move"
+        shown = str(value).replace("\n", "\n" + " " * 18)
+        lines.append(f"  {label + ':':<16}{shown}")
+    return "\n".join(lines) if lines else "  (nothing yet)"
+
+
+def _parse_prompt(outstanding: list[str], editing: bool, current: dict) -> str:
     now = datetime.now(LA_TZ)
 
     if editing:
@@ -125,10 +139,40 @@ for a Los Angeles moving company.
 
 Today is {now:%A, %B %-d, %Y} ({now:%Y-%m-%d}), America/Los_Angeles.
 
+# What is on file right now
+{_current_values(current)}
+
 {context}
 
 Extract only what they actually answered. Leave everything else null — a null is \
 harmless, an invented value books the wrong job.
+
+# Edits are instructions, not values
+A dispatcher often describes a CHANGE to something above rather than stating \
+the new value outright: "remove the gas fee line", "drop the second note", \
+"add that it's a walk-up", "pickup is in Arcadia", "change the date to the \
+14th". Every field you return must be the COMPLETE new value after applying \
+what they said — never the instruction itself, and never a fragment.
+
+Work from the values ABOVE, not from these illustrations:
+
+  on file   Job notes:  - Piano, ground floor
+                        - Dog in the yard
+                        - Narrow driveway, small truck
+                        - Customer prefers text
+  they say  "drop the dog line"
+  return    job_notes = "- Piano, ground floor\\n- Narrow driveway, small truck\\n- Customer prefers text"
+
+  on file   Pickup address:  8 Elm Ct #4
+  they say  "pickup is in Whittier"
+  return    pickup_address = "8 Elm Ct #4, Whittier"
+
+  they say  "remove the piano line"   but no such line is on file
+  return    job_notes = null   and list it in `unclear`
+
+For notes specifically: a removal touches ONLY the line named. Every other \
+line comes back exactly as it is on file — same words, same order. Count the \
+lines before and after; a removal of one line leaves one fewer, never two.
 
 Rules:
 - **Dates**: resolve relative references against today and output mm/dd/yyyy. \
@@ -151,12 +195,20 @@ One reply often answers several questions at once — e.g. "next Friday 8-9am, \
 3 guys, no notes" answers four."""
 
 
-def _parse(reply: str, questions: list[str], *, editing: bool) -> ParsedReply | None:
-    """Model call. Returns None when it fails, so the caller can re-ask."""
+def _parse(reply: str, questions: list[str], *, editing: bool,
+           current: dict | None = None) -> ParsedReply | None:
+    """
+    Model call. Returns None when it fails, so the caller can re-ask.
+
+    `current` is what makes edits work. Without it the model can extract a
+    value the dispatcher states ("8-9am") but has nothing to apply "remove the
+    gas fee line" to, so it returns null and the edit silently vanishes.
+    """
     model = get_model("parse_reply").with_structured_output(ParsedReply)
     try:
         return model.invoke(
-            [SystemMessage(content=_parse_prompt(questions, editing)), ("human", reply)]
+            [SystemMessage(content=_parse_prompt(questions, editing, current or {})),
+             ("human", reply)]
         )
     except Exception:
         logger.exception("Could not parse reply %r", reply[:200])
@@ -224,7 +276,7 @@ def ask_missing(state: OpsAgentState) -> dict:
     # user typed this a second ago and must not be asked to repeat it.
     if edit := intake.pop("_pending_edit", None):
         logger.info("Applying edit from the confirm gate: %r", str(edit)[:120])
-        if parsed := _parse(str(edit), [], editing=True):
+        if parsed := _parse(str(edit), [], editing=True, current=intake):
             _apply(intake, parsed)
         return {"intake": intake}
 
@@ -256,7 +308,7 @@ def ask_missing(state: OpsAgentState) -> dict:
         _record_round(intake, {}, "answer")
         return {"intake": intake}
 
-    parsed = _parse(reply, questions, editing=False)
+    parsed = _parse(reply, questions, editing=False, current=intake)
     if parsed is None:
         _record_round(intake, {}, "answer")
         return {"intake": intake}

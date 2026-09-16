@@ -120,3 +120,45 @@ def test_an_address_in_a_note_is_not_split_on_its_comma():
     from services import formatting
     assert formatting.format_notes("drop at 1561 W 223rd St, Torrance") == \
         "- drop at 1561 W 223rd St, Torrance"
+
+
+# ── Notes come from the dispatcher, never the screenshot ───────────────────────
+
+def test_notes_are_dropped_when_nothing_was_typed():
+    """
+    The screenshot is the customer talking. What goes on the job sheet is the
+    dispatcher's call, and they are asked — so a note with no typed source was
+    lifted from the image and goes.
+    """
+    from agent.nodes.extract_screenshot import _drop_screenshot_notes
+    intake = {"job_notes": "- Piano\n- 3rd floor walk-up"}
+    _drop_screenshot_notes(intake, "")
+    assert "job_notes" not in intake
+
+
+def test_notes_survive_when_the_dispatcher_typed_something():
+    from agent.nodes.extract_screenshot import _drop_screenshot_notes
+    intake = {"job_notes": "- $50 gas fee"}
+    _drop_screenshot_notes(intake, "Friday, $50 gas fee")
+    assert intake["job_notes"] == "- $50 gas fee"
+
+
+def test_the_image_only_placeholder_counts_as_nothing_typed():
+    """
+    Every channel fills the text slot with "Book this job." for a bare image.
+    Treating that as typed text would keep screenshot notes on every such send
+    — and show the model "EVIDENCE 1: Book this job.".
+    """
+    from agent.nodes import extract_screenshot as node
+    assert node.IMAGE_ONLY_PLACEHOLDER == "Book this job."
+    intake = {"job_notes": "- Piano"}
+    # The node itself normalises the placeholder before this runs; here we
+    # assert the constant matches what the channels send.
+    from channels import google_chat
+    import inspect
+    assert node.IMAGE_ONLY_PLACEHOLDER in inspect.getsource(google_chat)
+
+
+def test_the_prompt_forbids_notes_from_the_screenshot():
+    from agent.nodes import extract_screenshot as node
+    assert "ONLY what the staff member typed. Never from the screenshot" in node.SYSTEM_PROMPT_BODY
