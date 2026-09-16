@@ -209,3 +209,47 @@ def test_out_of_state_match_offers_no_suggested_address():
     assert v.formatted == ""
     assert "Which city" in v.note
     assert "pickup is in" in v.note        # tells them how to answer
+
+
+# ── Addresses that wrap onto a second line ─────────────────────────────────────
+
+@pytest.mark.parametrize("raw,expected", [
+    ("436 Fairview Ave #32\nArcadia, CA 91007", "436 Fairview Ave #32, Arcadia, CA 91007"),
+    ("6343 Livia Ave, Temple City,\nCA 91780",   "6343 Livia Ave, Temple City, CA 91780"),
+    ("1 Main St\n\nBurbank CA 91505",            "1 Main St, Burbank CA 91505"),   # blank line
+    ("1 Main St",                                "1 Main St"),                     # nothing to join
+    ("",                                         ""),
+])
+def test_wrapped_lines_are_joined_with_a_comma(raw, expected):
+    """
+    On a phone the street lands on one line and the city on the next, and the
+    model returns them with a literal newline. Google accepts that but hands
+    back "436 Fairview Ave #32 Arcadia CA 91007" — no comma, not the calendar
+    format. Joining first gives it a proper line.
+    """
+    from services import formatting
+    assert formatting.join_wrapped_address(raw) == expected
+
+
+def test_extraction_joins_wrapped_addresses_before_anything_reads_them():
+    from agent.nodes.extract_screenshot import _to_intake
+    from schemas.intake import ScreenshotExtraction
+
+    extraction = ScreenshotExtraction(
+        pickup_address={"value": "436 Fairview Ave #32\nArcadia, CA 91007", "confidence": 0.95},
+        dropoff_address={"value": "6343 Livia Ave\nTemple City CA 91780", "confidence": 0.95},
+    )
+    intake, _ = _to_intake(extraction)
+    assert "\n" not in intake["pickup_address"]
+    assert intake["pickup_address"] == "436 Fairview Ave #32, Arcadia, CA 91007"
+    assert intake["dropoff_address"] == "6343 Livia Ave, Temple City CA 91780"
+
+
+def test_the_prompt_tells_the_model_addresses_wrap():
+    """
+    The join above only helps once the model has taken BOTH lines. Stopping at
+    the first — the failure seen live — has to be ruled out in the prompt.
+    """
+    from agent.nodes import extract_screenshot as node
+    assert "Addresses wrap" in node.SYSTEM_PROMPT_BODY
+    assert "PART OF THAT ADDRESS" in node.SYSTEM_PROMPT_BODY

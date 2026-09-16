@@ -182,6 +182,22 @@ _ADDRESS_LABEL = re.compile(
 )
 
 
+def join_wrapped_address(raw: str) -> str:
+    """
+    An address read off a screenshot often arrives as two lines:
+
+        436 Fairview Ave #32
+        Arcadia, CA 91007
+
+    Google's validator accepts the newline but returns the street and city run
+    together with no comma — "436 Fairview Ave #32 Arcadia CA 91007" — which
+    is not the calendar's format. Joining with ", " first gives it a proper
+    line and yields "436 Fairview Ave #32, Arcadia CA 91007".
+    """
+    parts = [p.strip().rstrip(",") for p in str(raw or "").splitlines()]
+    return ", ".join(p for p in parts if p)
+
+
 def strip_address_label(raw: str) -> str:
     """
     Remove a leading field label. Applied repeatedly, since a screenshot line

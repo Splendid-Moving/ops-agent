@@ -123,6 +123,15 @@ incomplete. "412 N Maple Ave" with no city is a perfectly good extraction — \
 write it as-is. NEVER add a city, state or ZIP that is not written down. A \
 separate verification step completes addresses properly; inventing one here \
 corrupts that step's input.
+  - **Addresses wrap.** On a phone screen the street lands on one line and the \
+city, state and ZIP on the next. A line that reads like "City, ST 12345" — or \
+just "CA 91780" — directly under a street address is PART OF THAT ADDRESS. \
+Take both lines and join them with ", ". Stopping at the end of the first line \
+produces an address with no city, which then cannot be verified.
+      screenshot shows   436 Fairview Ave #32
+                         Arcadia, CA 91007
+        pickup_address = "436 Fairview Ave #32, Arcadia, CA 91007"   correct
+        pickup_address = "436 Fairview Ave #32"                       wrong
   - Determine direction from context: "moving from X to Y", "pickup"/"dropoff", \
 "current address"/"new address".
   - If two addresses appear but the direction is unclear, put the first in \
@@ -330,6 +339,12 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
         confidence[name] = field.confidence
         if field.is_usable:
             intake[name] = field.value.strip()
+
+    # A wrapped address comes back with a literal newline in it. Joined here so
+    # the validator sees one proper line — see join_wrapped_address.
+    for name in ("pickup_address", "dropoff_address", "extra_stop"):
+        if name in intake:
+            intake[name] = formatting.join_wrapped_address(intake[name])
 
     # Normalise the two fields with a canonical form, so downstream comparison
     # and duplicate detection work on consistent values.
