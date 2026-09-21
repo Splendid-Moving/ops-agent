@@ -18,6 +18,7 @@ naive completion turned "1830 pine st glendale" into an address in Wyoming.
 import logging
 
 from agent import progress
+from schemas import checklist as cl
 from agent.state import OpsAgentState
 from schemas.intake import ADDRESS_FIELDS
 from services import address as address_service
@@ -32,9 +33,13 @@ def resolve_addresses(state: OpsAgentState) -> dict:
     candidates = {
         name: intake.get(name, "")
         for name in ADDRESS_FIELDS
-        if str(intake.get(name, "") or "").strip()
+        if str(intake.get(name, "") or "").strip() and not cl.is_tbd(intake.get(name, ""))
     }
+    deferred = {name: "tbd" for name in ADDRESS_FIELDS if cl.is_tbd(intake.get(name, ""))}
     if not candidates:
+        if deferred:
+            intake["address_status"] = {**(intake.get("address_status") or {}), **deferred}
+            return {"intake": intake}
         return {}
 
     progress.working(f"Verifying {len(candidates)} address"
@@ -71,14 +76,20 @@ def resolve_addresses(state: OpsAgentState) -> dict:
                       f"{'es' if confirmed != 1 else ''}")
     if flagged := len(status) - confirmed:
         progress.warn(f"{flagged} address needs a look")
-    intake["address_status"] = status
+    intake["address_status"] = {**status, **deferred}
     return {"intake": intake}
 
 
 def unresolved_addresses(intake: dict) -> dict[str, str]:
-    """Addresses that still need a human decision, for the confirm gate."""
+    """
+    Addresses that still need a human decision, for the confirm gate.
+
+    A TBD address is not one of them — the decision has already been made,
+    and the summary line says so. Listing it here as well read as a warning
+    about something the dispatcher had just deliberately chosen.
+    """
     return {
         name: note
         for name, note in (intake.get("address_status") or {}).items()
-        if not note.startswith("confirmed")
+        if not note.startswith("confirmed") and note != "tbd"
     }

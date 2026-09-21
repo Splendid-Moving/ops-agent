@@ -67,8 +67,16 @@ class ParsedReply(BaseModel):
     full_name: str | None = None
     email: str | None = None
     phone: str | None = None
-    pickup_address: str | None = None
-    dropoff_address: str | None = None
+    pickup_address: str | None = Field(
+        default=None,
+        description="The address as written, or the literal string 'TBD' if "
+                    "they say they don't have it yet.",
+    )
+    dropoff_address: str | None = Field(
+        default=None,
+        description="The address as written, or the literal string 'TBD' if "
+                    "they say they don't have it yet.",
+    )
     extra_stop: str | None = Field(
         default=None, description="Only if the user volunteers a third address."
     )
@@ -188,6 +196,11 @@ in the future. If a date is genuinely ambiguous, leave it null and list it in \
 difference matters: empty means asked and answered, null means never addressed.
 - **Addresses**: copy exactly as written, even if incomplete. Do NOT add a city, \
 state or ZIP. A separate step completes them; a guess here corrupts it.
+- **An address they don't have yet**: "drop-off later", "customer will send \
+it", "TBD", "don't have the address yet", "she'll text it" -> the literal \
+string "TBD" for that address. This is a real answer — the dispatcher has \
+decided the job can be booked without it. Do NOT put a city or a ZIP in the \
+address field as a stand-in; "Yorba Linda" is not an address.
 - **reply_kind**: judge the message as a whole. A reply can both answer a \
 question AND wander off — if they answered anything at all, it is an "answer".
 
@@ -268,6 +281,24 @@ def _record_round(intake: dict, updates: dict, kind: str) -> None:
     intake["_ask_rounds"] = int(intake.get("_ask_rounds", 0)) + 1
 
 
+def _acknowledge_tbd(intake: dict, updates: dict) -> None:
+    """
+    Say out loud that "later" was heard. Otherwise the next message just shows
+    "Drop-off address: TBD" in the list and the dispatcher is left wondering
+    whether that was understood or is about to be asked again.
+    """
+    deferred = [
+        cl.BY_NAME[name].label.lower()
+        for name in ("pickup_address", "dropoff_address")
+        if name in updates and cl.is_tbd(updates[name])
+    ]
+    if deferred:
+        intake["_aside"] = (
+            f"Got it — {' and '.join(deferred)} marked as to be confirmed. "
+            "Remember to add it before the move."
+        )
+
+
 def ask_missing(state: OpsAgentState) -> dict:
     intake = dict(state.get("intake") or {})
 
@@ -315,6 +346,7 @@ def ask_missing(state: OpsAgentState) -> dict:
 
     updates = _apply(intake, parsed)
     _record_round(intake, updates, parsed.reply_kind)
+    _acknowledge_tbd(intake, updates)
     return {"intake": intake}
 
 

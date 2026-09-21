@@ -133,6 +133,11 @@ def _row(label: str, value: str) -> str:
     )
 
 
+def _address_or_pending(value: str) -> str:
+    """The customer sees 'to be confirmed', never the internal 'TBD'."""
+    return "To be confirmed" if str(value or "").strip().upper() == "TBD" else value
+
+
 def _detail_rows(intake: dict) -> str:
     """
     Booking details, skipping anything absent.
@@ -149,12 +154,12 @@ def _detail_rows(intake: dict) -> str:
         _row("Move date", intake.get("move_date", "")),
         _row("Arrival time", intake.get("arrival_time", "")),
         _row("Phone", intake.get("phone", "")),
-        _row("From", intake.get("pickup_address", "")),
+        _row("From", _address_or_pending(intake.get("pickup_address", ""))),
     ]
     if intake.get("extra_stop"):
         rows.append(_row("Extra stop", intake["extra_stop"]))
     if not is_labor and intake.get("dropoff_address"):
-        rows.append(_row("To", intake["dropoff_address"]))
+        rows.append(_row("To", _address_or_pending(intake["dropoff_address"])))
     if rate:
         rows.append(_row("Rate", rate))
     if movers := intake.get("movers"):

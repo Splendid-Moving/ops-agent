@@ -22,6 +22,7 @@ from agent import progress
 from agent.models import get_model
 from agent.state import OpsAgentState, booking_has_run, new_ledger
 from schemas import business_context
+from schemas import checklist as cl
 from schemas.intake import MIN_CONFIDENCE, ScreenshotExtraction
 from services import formatting, ocr
 from services.ghl import PICKLIST_VALUES, CustomField
@@ -136,6 +137,9 @@ produces an address with no city, which then cannot be verified.
 "current address"/"new address".
   - If two addresses appear but the direction is unclear, put the first in \
 pickup, and lower BOTH confidences.
+  - **The staff member may say an address is not known yet** — "drop-off \
+later", "customer will send the address", "TBD". Put the literal string "TBD" \
+in that address field. It is a decision, not a gap.
   - **Return the address ONLY — never the label in front of it.** The label tells \
 you which field it belongs in; it is not part of the value.
       screenshot shows "From: 614 E Verdugo Ave"
@@ -344,7 +348,7 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     # the validator sees one proper line — see join_wrapped_address.
     for name in ("pickup_address", "dropoff_address", "extra_stop"):
         if name in intake:
-            intake[name] = formatting.join_wrapped_address(intake[name])
+            intake[name] = cl.normalize_address(intake[name])
 
     # Normalise the two fields with a canonical form, so downstream comparison
     # and duplicate detection work on consistent values.

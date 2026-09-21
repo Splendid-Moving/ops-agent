@@ -52,12 +52,12 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
         f"  Email       {intake.get('email', '?')}",
         f"  Date        {intake.get('move_date', '?')} at {intake.get('arrival_time', '?')}",
         f"  Crew        {movers} movers — {rate}",
-        f"  Pickup      {intake.get('pickup_address', '?')}",
+        f"  Pickup      {_address_line(intake.get('pickup_address', '?'))}",
     ]
     if intake.get("extra_stop"):
         lines.append(f"  Extra stop  {intake['extra_stop']}")
     if not labor:
-        lines.append(f"  Drop-off    {intake.get('dropoff_address', '?')}")
+        lines.append(f"  Drop-off    {_address_line(intake.get('dropoff_address', '?'))}")
     if intake.get("job_notes"):
         lines.append(f"  Notes       {intake['job_notes']}")
 
@@ -134,6 +134,11 @@ def _find_existing_contact(intake: dict) -> dict | None:
     except Exception:
         logger.exception("Existing-contact lookup failed; continuing without it")
         return None
+
+
+def _address_line(value: str) -> str:
+    """A deferred address is shown as a decision, not as a blank."""
+    return "TBD — customer to confirm" if cl.is_tbd(value) else value
 
 
 def _find_duplicate(intake: dict) -> dict | None:

@@ -41,6 +41,7 @@ from agent.state import (
     failed_actions,
     succeeded,
 )
+from schemas import checklist as cl
 from schemas import email_template
 from services import calendar, config, formatting, ghl, maps, rates
 from services.ghl import CustomField
@@ -217,7 +218,9 @@ def act_calendar_event(state: OpsAgentState) -> dict:
     extra_stop = intake.get("extra_stop", "")
 
     # Distance is informational; a failure here must not block the booking.
-    distance = maps.get_distance(pickup, dropoff, extra_stop or None) if dropoff else ""
+    # A TBD address has nothing to measure to — "TBD" is not a place.
+    can_measure = pickup and dropoff and not cl.is_tbd(pickup) and not cl.is_tbd(dropoff)
+    distance = maps.get_distance(pickup, dropoff, extra_stop or None) if can_measure else ""
 
     description = calendar.build_description(
         customer=intake.get("full_name", ""),

@@ -93,15 +93,49 @@ def valid_movers(value: str) -> str | None:
     return f"Crew size must be one of {', '.join(map(str, rates.SUPPORTED_MOVER_COUNTS))}."
 
 
+#: An address the dispatcher has explicitly said they do not have YET.
+#:
+#: The one accepted stand-in for a real address. It exists because a job is
+#: sometimes booked before the customer has sent the drop-off, and without a
+#: way to say so the checklist could only re-ask — which it did, four times in
+#: a row, to a dispatcher who had already answered. The dispatcher makes the
+#: call that the address can wait; this is how the agent records it.
+#:
+#: Addresses only. Everything else on the checklist is needed for a side effect
+#: to fire at all — no email, no confirmation; no phone, no deposit text; no
+#: date, no calendar event. Nothing fires on an address, so it can wait.
+ADDRESS_TBD = "TBD"
+
+
+def is_tbd(value: str) -> bool:
+    return str(value or "").strip().upper() == ADDRESS_TBD
+
+
+def normalize_address(value: str) -> str:
+    """Wrapped lines joined, TBD in canonical casing. Applied from any source."""
+    if is_tbd(value):
+        return ADDRESS_TBD
+    return formatting.join_wrapped_address(value)
+
+
 def valid_address(value: str) -> str | None:
     """
     Shallow check only. Real completion and verification is the address node's
     job — this just rejects obvious non-addresses before spending an API call.
     """
+    if is_tbd(value):
+        return None
     if len(value.strip()) < 5:
         return f"{value!r} is too short to be an address."
-    if not re.search(r"\d", value):
-        return f"{value!r} has no street number."
+    # A street address starts with the house number. "Yorba Linda 92886" has
+    # digits in it — the ZIP — and used to pass, then reached the confirm gate
+    # as a drop-off. Requiring the number up front is what a real address
+    # actually looks like, and what the ZIP-only case does not.
+    if not re.match(r"\s*\d+[A-Za-z]?\s", value):
+        return (
+            f"{value!r} doesn't start with a street number. Give the full street "
+            f"address, or say '{ADDRESS_TBD}' if the customer will send it later."
+        )
     return None
 
 
@@ -160,6 +194,7 @@ CHECKLIST: tuple[FieldSpec, ...] = (
         required_for=("contact", "calendar"),
         ask="What's the pickup address?",
         validator=valid_address,
+        normalizer=normalize_address,
         examples=("412 N Maple Ave, Burbank CA 91505",),
     ),
     FieldSpec(
@@ -168,6 +203,7 @@ CHECKLIST: tuple[FieldSpec, ...] = (
         required_for=("contact", "calendar"),
         ask="What's the drop-off address?",
         validator=valid_address,
+        normalizer=normalize_address,
         skip_if_labor=True,
         examples=("1830 Pine St, Glendale CA 91206",),
     ),
@@ -177,6 +213,7 @@ CHECKLIST: tuple[FieldSpec, ...] = (
         required_for=(),
         ask="",  # never asked
         validator=valid_address,
+        normalizer=normalize_address,
         never_ask=True,
     ),
     FieldSpec(
