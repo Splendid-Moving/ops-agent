@@ -14,7 +14,8 @@ last month" is a number that gets used.
 """
 
 import logging
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 
 from langchain.agents import create_agent
@@ -75,6 +76,27 @@ def _arrival_window(job: dict) -> str:
 
     same_half = datetime.fromisoformat(start).strftime("%p") == datetime.fromisoformat(end).strftime("%p")
     return f"{label(start, not same_half)}-{label(end, True)}"
+
+
+def _crew_size(raw: str) -> int | None:
+    """Crew size as a number, or None when the event does not record one."""
+    digits = re.sub(r"\D", "", str(raw or ""))
+    return int(digits) if digits else None
+
+
+def _sort_key(day: str) -> tuple:
+    """Chronological order for mm/dd/yyyy keys; undated last."""
+    try:
+        return (0, datetime.strptime(day, "%m/%d/%Y"))
+    except ValueError:
+        return (1, datetime.max)
+
+
+def _weekday(day: str) -> str:
+    try:
+        return datetime.strptime(day, "%m/%d/%Y").strftime("%A")
+    except ValueError:
+        return "date unknown"
 
 
 @tool
@@ -206,7 +228,69 @@ def busiest_days(start_date: str, end_date: str, top_n: int = 5) -> str:
     return "\n".join(lines)
 
 
-TOOLS = [count_jobs, list_jobs, busiest_days]
+@tool
+def movers_needed(start_date: str, end_date: str) -> str:
+    """Total movers needed each day. Use for staffing and crew-count questions.
+
+    Sums the crew size across every job on each day, so "how many movers do we
+    need Saturday" is answered from the calendar rather than worked out by hand.
+
+    Args:
+        start_date: First day of the range, YYYY-MM-DD.
+        end_date: Last day of the range, YYYY-MM-DD.
+    """
+    progress.working("Adding up crew sizes\u2026")
+    start, end = _parse_range(start_date, end_date)
+    jobs = calendar.list_jobs(start, end)
+
+    if not jobs:
+        progress.done("No jobs in that range")
+        return f"No jobs between {start_date} and {end_date}."
+
+    per_day: dict[str, Counter] = defaultdict(Counter)
+    unknown: dict[str, list[str]] = defaultdict(list)
+    for job in jobs:
+        day = job.get("calendar_date") or "(no date)"
+        if (crew := _crew_size(job.get("movers", ""))) is None:
+            unknown[day].append(job.get("customer") or "(no name)")
+        else:
+            per_day[day][crew] += 1
+
+    progress.done(f"Totalled {len(jobs)} jobs")
+
+    lines = [
+        "Movers needed per day. Each total is the sum of the Movers field "
+        "across that day's jobs, and assumes no crew works more than one job "
+        "in a day — the calendar does not record whether they do.",
+        "",
+    ]
+    grand_movers = grand_jobs = 0
+
+    for day in sorted(set(per_day) | set(unknown), key=_sort_key):
+        crews = per_day[day]
+        movers = sum(crew * n for crew, n in crews.items())
+        counted = sum(crews.values())
+        grand_movers += movers
+        grand_jobs += counted
+
+        lines.append(f"{day} ({_weekday(day)}): {movers} movers across {counted} "
+                     f"job{'' if counted == 1 else 's'}")
+        for crew, n in sorted(crews.items()):
+            lines.append(f"    {n} job{'' if n == 1 else 's'} x {crew} movers = {crew * n}")
+        if missing := unknown.get(day):
+            lines.append(
+                f"    NOTE: {len(missing)} job(s) that day have no crew size recorded "
+                f"and are NOT in the total: {', '.join(missing)}. "
+                "Say so — the real figure is higher."
+            )
+        lines.append("")
+
+    if len(set(per_day) | set(unknown)) > 1:
+        lines.append(f"Range total: {grand_movers} movers across {grand_jobs} jobs.")
+    return "\n".join(lines).strip()
+
+
+TOOLS = [count_jobs, list_jobs, busiest_days, movers_needed]
 
 
 def _system_prompt() -> str:
@@ -231,12 +315,29 @@ Resolve relative dates yourself, then call a tool with explicit YYYY-MM-DD \
 bounds. Both ends are inclusive.
 
 Tool choice:
-- "how many" -> count_jobs
+- "how many jobs" -> count_jobs
 - "who / what's scheduled / show me" -> list_jobs
 - "busiest / capacity / how full" -> busiest_days
+- "how many movers / crew / who do I need to staff" -> movers_needed
 
 Rules:
 - NEVER invent a number. Every figure you give must come from a tool result.
+- **You have one turn.** Nothing runs after you stop typing, so there is no \
+"let me check and get back to you" and no "give me a minute" — a reply that \
+promises a follow-up is a follow-up the user never receives. Need calendar \
+data? Call the tool NOW and answer from what it returns.
+- **Never do arithmetic the tools can do.** Crew totals in particular: call \
+movers_needed rather than multiplying crew sizes by job counts yourself. Do \
+not split a multi-day tool result into single days by hand either — call the \
+tool again for the day asked about.
+- **Challenged? Re-check, don't retract.** "Are you sure?" means call the tool \
+again and report what it says. Withdrawing a figure and saying you cannot \
+answer is worse than the original mistake: the question still has an answer \
+and the calendar still has it.
+- **Report only what the tool counted.** It returns mover-slots summed across \
+jobs. Do not embroider that into "unique movers if shifts overlap" or similar \
+— the calendar records no shift or crew-reuse information, so any such figure \
+is invented.
 - The tools already exclude non-job events (crew meetings, blocks), so their \
 counts are the real job counts. Do not adjust them.
 - Report what the tool returned. If a breakdown is interesting, mention it \
@@ -259,7 +360,13 @@ def analytics(state: OpsAgentState) -> dict:
         # caller if we just .invoke(). Streaming the sub-agent and forwarding
         # its custom events keeps "Checking the calendar…" arriving live
         # instead of after the answer is already written.
-        writer = get_stream_writer()
+        # Raises, rather than returning None, when there is no surrounding
+        # graph run — a CLI call or a direct unit test. Progress updates are a
+        # nicety; losing them must not turn into "I couldn't read the calendar".
+        try:
+            writer = get_stream_writer()
+        except RuntimeError:
+            writer = None
         final: dict = {}
         for mode, chunk in agent.stream(agent_input, stream_mode=["custom", "values"]):
             if mode == "custom":

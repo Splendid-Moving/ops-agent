@@ -93,17 +93,7 @@ def valid_movers(value: str) -> str | None:
     return f"Crew size must be one of {', '.join(map(str, rates.SUPPORTED_MOVER_COUNTS))}."
 
 
-#: An address the dispatcher has explicitly said they do not have YET.
-#:
-#: The one accepted stand-in for a real address. It exists because a job is
-#: sometimes booked before the customer has sent the drop-off, and without a
-#: way to say so the checklist could only re-ask — which it did, four times in
-#: a row, to a dispatcher who had already answered. The dispatcher makes the
-#: call that the address can wait; this is how the agent records it.
-#:
-#: Addresses only. Everything else on the checklist is needed for a side effect
-#: to fire at all — no email, no confirmation; no phone, no deposit text; no
-#: date, no calendar event. Nothing fires on an address, so it can wait.
+
 ADDRESS_TBD = "TBD"
 
 
