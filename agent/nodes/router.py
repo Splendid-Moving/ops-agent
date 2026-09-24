@@ -1,8 +1,8 @@
 """
 NODE: Router
-PURPOSE: Classify the current turn into one of three lanes.
+PURPOSE: Classify the current turn into one of four lanes.
 INPUT:   state.messages
-OUTPUT:  {"intent": "analytics" | "intake" | "chat"}
+OUTPUT:  {"intent": "analytics" | "site" | "intake" | "chat"}
 
 Note on scope: this node does NOT need to detect "the user is answering a
 missing-field question". When the graph is paused at an interrupt(), a
@@ -27,6 +27,7 @@ class Route(BaseModel):
     intent: str = Field(
         description=(
             "One of: 'analytics' for questions about existing jobs/calendar data; "
+            "'site' for questions about traffic to the company website; "
             "'intake' for booking a new job or processing a customer screenshot; "
             "'chat' for anything else."
         )
@@ -46,6 +47,13 @@ summarising, checking the schedule.
   "how many Yelp jobs in July?"
   "who are we moving tomorrow?"
 
+**site** — questions about the company WEBSITE, splendidmoving.com: visitors, \
+pageviews, which pages people read, where traffic comes from.
+  "how many people visited the site last week?"
+  "what are people finding us through?"
+  "which pages get the most traffic?"
+  "is the website traffic up or down?"
+
 **intake** — booking a NEW job. Almost always accompanied by a screenshot of \
 customer details, but not always.
   "book this one" (with image)
@@ -64,6 +72,11 @@ Rules:
 explicit question about existing data.
 - If a message asks about the PAST or about EXISTING jobs, it is analytics, \
 even if it names a customer.
+- **analytics vs site is about WHAT is being counted, not when.** Both lanes \
+answer "how many ... last month". Jobs, moves, crews, customers, the calendar \
+-> analytics. Visitors, pageviews, clicks, pages, referrers, the website, \
+"the site" -> site. "How many jobs last week" and "how many visitors last \
+week" are different lanes.
 - When genuinely torn between analytics and intake, choose **chat** — asking \
 one clarifying question is much cheaper than starting the wrong workflow."""
 
@@ -99,7 +112,7 @@ def route(state: OpsAgentState) -> dict:
     recent = messages[-4:]
     decision = model.invoke([SystemMessage(content=SYSTEM_PROMPT), *recent])
 
-    intent = decision.intent if decision.intent in ("analytics", "intake", "chat") else "chat"
+    intent = decision.intent if decision.intent in ("analytics", "site", "intake", "chat") else "chat"
     logger.info("Router: %s — %s", intent, decision.reasoning)
     return {"intent": intent}
 

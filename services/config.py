@@ -33,6 +33,20 @@ def ghl_user_id() -> str:
     return os.getenv("GHL_USER_ID", "")
 
 
+# ── Vercel (website analytics) ─────────────────────────────────────────────────
+
+def vercel_token() -> str:
+    return os.getenv("VERCEL_TOKEN", "")
+
+
+def website_project_id() -> str:
+    return os.getenv("WEBSITE_PROJECT_ID", "")
+
+
+def vercel_team_id() -> str:
+    return os.getenv("VERCEL_TEAM_ID", "")
+
+
 # ── Google ─────────────────────────────────────────────────────────────────────
 
 def google_credentials_b64() -> str:

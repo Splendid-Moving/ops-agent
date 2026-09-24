@@ -43,6 +43,13 @@ REGISTRY: dict[str, ModelSpec] = {
         openrouter="anthropic/claude-sonnet-4.6",
         rationale="relative-date reasoning, output is Python-validated",
     ),
+    # Answers website-traffic questions. Same shape as analytics: pick a range,
+    # call a tool, read the result back. All counting happens in Python.
+    "site_traffic": ModelSpec(
+        openai="gpt-5.1",
+        openrouter="anthropic/claude-sonnet-4.6",
+        rationale="tool calling over Vercel analytics; arithmetic is Python's",
+    ),
     # Answers calendar questions. Multi-step tool calling plus date math.
     "analytics": ModelSpec(
         openai="gpt-5.1",

@@ -2,6 +2,7 @@
 Graph wiring. The whole topology lives here, readable top to bottom.
 
     START -> router -> analytics                                      -> END
+                    -> site (website traffic)                     -> END
                     -> chat                                           -> END
                     -> extract_screenshot -> resolve_addresses -> validate
                          validate --incomplete--> ask_missing -> resolve_addresses -> validate
@@ -28,6 +29,7 @@ from agent.nodes import confirm as confirm_node
 from agent.nodes import extract_screenshot as extract_node
 from agent.nodes import resolve_addresses as address_node
 from agent.nodes import router as router_node
+from agent.nodes import site_traffic as site_node
 from agent.nodes import validate_checklist as validate_node
 from agent.state import OpsAgentState, new_ledger
 
@@ -68,6 +70,7 @@ def build_graph(checkpointer=None):
 
     builder.add_node("router", router_node.route)
     builder.add_node("analytics", analytics_node.analytics)
+    builder.add_node("site", site_node.site_traffic_agent)
     builder.add_node("chat", chat_node.chat)
 
     builder.add_node("extract_screenshot", extract_node.extract_screenshot)
@@ -89,9 +92,11 @@ def build_graph(checkpointer=None):
     builder.add_conditional_edges(
         "router",
         router_node.pick_lane,
-        {"analytics": "analytics", "intake": "extract_screenshot", "chat": "chat"},
+        {"analytics": "analytics", "site": "site",
+         "intake": "extract_screenshot", "chat": "chat"},
     )
     builder.add_edge("analytics", END)
+    builder.add_edge("site", END)
     builder.add_edge("chat", END)
 
     # Intake: extract, complete the addresses, then check.
