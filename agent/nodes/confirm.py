@@ -16,6 +16,7 @@ here should be everything that will happen.
 """
 
 import logging
+from datetime import datetime
 from typing import Literal
 
 from langgraph.types import Command, interrupt
@@ -24,7 +25,8 @@ from agent.nodes.resolve_addresses import unresolved_addresses
 from agent.state import OpsAgentState
 from schemas import checklist as cl
 from schemas.intake import EDITABLE_FIELDS
-from services import calendar, config, ghl, rates
+from services import calendar, config, formatting, ghl, rates
+from services.calendar import LA_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,8 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
         lines.append(f"  Extra stop  {intake['extra_stop']}")
     if not labor:
         lines.append(f"  Drop-off    {_address_line(intake.get('dropoff_address', '?'))}")
+    if intake.get("source"):
+        lines.append(f"  Source      {intake['source']}")
     if intake.get("job_notes"):
         lines.append(f"  Notes       {intake['job_notes']}")
 
@@ -123,6 +127,34 @@ def _returning_note(existing: dict) -> str:
     return "  ·  returning customer"
 
 
+def _moved_with_us_before(existing: dict | None, intake: dict) -> bool:
+    """
+    Whether the GHL record shows a move that has already happened.
+
+    A contact existing is not enough — a lead who got a quote and never booked
+    has one too. A recorded move date in the past is. The name must match as
+    well: a mistyped phone landing on someone else's record says nothing about
+    this customer.
+    """
+    if not existing or not _same_person(intake.get("full_name", ""), existing.get("name", "")):
+        return False
+    last = formatting.parse_date(existing.get("last_move", ""))
+    return last is not None and last.date() < datetime.now(LA_TZ).date()
+
+
+def _with_returning_source(intake: dict, existing: dict | None) -> dict:
+    """
+    Fill the lead source from GHL history when nothing else has set it.
+
+    Only when blank: an explicit source from the dispatcher or the screenshot
+    — including "Previous Customer" itself — is better evidence than a lookup.
+    Deterministic, so it is safe above the interrupt.
+    """
+    if intake.get("source") or not _moved_with_us_before(existing, intake):
+        return intake
+    return {**intake, "source": "Previous Customer"}
+
+
 def _find_existing_contact(intake: dict) -> dict | None:
     """
     Read-only, and above the interrupt, so it re-runs on every resume — which is
@@ -162,6 +194,7 @@ def confirm(state: OpsAgentState) -> Command[Literal["execute", "ask_missing", "
     result = cl.evaluate(intake)
     duplicate = _find_duplicate(intake)
     existing = _find_existing_contact(intake)
+    intake = _with_returning_source(intake, existing)
 
     # ── Above the interrupt: pure formatting + a read-only lookup. ──
     answer = interrupt(
@@ -177,7 +210,7 @@ def confirm(state: OpsAgentState) -> Command[Literal["execute", "ask_missing", "
     decision = str(answer or "").strip().lower()
 
     if decision in ("yes", "y", "ok", "okay", "go", "go ahead", "confirm", "do it", "send it"):
-        return Command(update={"approved": True}, goto="execute")
+        return Command(update={"approved": True, "intake": intake}, goto="execute")
 
     if decision in ("no", "n", "cancel", "stop", "nope", "abort", "never mind"):
         return Command(update={"approved": False}, goto="__end__")

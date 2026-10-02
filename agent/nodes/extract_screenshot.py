@@ -202,14 +202,43 @@ the lead source: an SMS thread, an email client or WhatsApp tells you how they \
 are talking to us, not where they came from. "SMS", "Text", "Email" and \
 "Website" are all wrong answers here.
 
-**notes** — ONLY what the staff member typed. Never from the screenshot.
+**Previous Customer** — whenever EITHER source says the customer has used us \
+before, the source is "Previous Customer", confidence 0.9+. The staff member \
+typing "previous customer", "returning client", "moved them last year", or the \
+customer writing "you guys moved us before" / "we used you last time" all \
+count. This outranks the app the message arrived in: a past customer texting \
+via Yelp is still a Previous Customer. It is a SOURCE, never a note — do not \
+mention it in notes in any form.
 
-The screenshot is the customer talking; the notes are the dispatcher's own \
-record of what was agreed. A customer mentioning stairs in a Yelp message is \
-not yet a job note — the dispatcher decides what goes on the job sheet, and \
-they will be asked. So: if the staff member typed nothing, notes are blank, \
-however much the screenshot says. If they typed "$50 gas fee", that is the \
-note, and nothing from the image is added to it.
+**notes** — anything that will help the crew on the day and has no field of \
+its own. Take it from what the staff member typed AND from the screenshot: a \
+customer conversation is full of exactly this, and the dispatcher should not \
+have to retype it.
+
+Worth a note:
+  - stairs, floors, walk-ups, elevators (and whether one must be reserved)
+  - parking and loading: no parking, permit needed, long carry, narrow \
+street, truck size limits, gate or building access codes
+  - heavy, bulky or delicate items: piano, safe, gun safe, pool table, \
+treadmill, large TV, antiques, glass, artwork
+  - special requests: disassembly / reassembly, packing, wrapping, \
+"please bring wardrobe boxes", "need to be out by noon", "call on arrival"
+  - building rules: COI required, move hours, freight elevator
+  - extra charges the staff member mentions: gas fee, stair fee, packing \
+materials
+
+NOT a note — leave these out even when they are on screen:
+  - the hourly rate, a quote, a price per hour, cash/card pricing, the \
+deposit — rates have their own field
+  - anything that already has a field: name, phone, email, date, arrival \
+time, addresses, crew size, move size, labor-only
+  - the lead source, including "previous customer"
+  - chit-chat, greetings, availability back-and-forth, "sounds good", thanks
+  - anything uncertain or that the conversation later contradicts
+
+Keep each line short and factual, as a crew lead would read it. Where the \
+staff member and the screenshot disagree, the staff member wins. If nothing \
+qualifies, notes are blank — that is the right answer far more often than not.
 
 FORMAT: one fact per line, each starting with "- ". Never run several facts \
 together in a sentence.
@@ -299,8 +328,8 @@ def _apply_ocr_corrections(intake: dict, ocr_text: str) -> list[str]:
 
 #: What every channel puts in the text slot when the user sent only an image.
 #: It is not evidence and must not be treated as the dispatcher having typed
-#: something — that would show the model "EVIDENCE 1: Book this job." and
-#: defeat the no-notes-without-text rule.
+#: something — that would show the model "EVIDENCE 1: Book this job." as if
+#: the dispatcher had said it.
 IMAGE_ONLY_PLACEHOLDER = "Book this job."
 
 
@@ -373,10 +402,34 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
     # Extraction notes seed job_notes but do NOT count as having asked — the
     # user is still prompted, because extra charges are agreed with staff and
     # will not be in a customer's screenshot.
-    if extraction.notes.is_usable and (note := formatting.format_notes(extraction.notes.value)):
-        intake["job_notes"] = note
+    if extraction.notes.is_usable:
+        note, lifted = formatting.clean_job_notes(extraction.notes.value)
+        if note:
+            intake["job_notes"] = note
+        if lifted:
+            _set_previous_customer(intake, confidence)
 
     return intake, confidence
+
+
+def _set_previous_customer(intake: dict, confidence: dict) -> None:
+    """
+    "Previous Customer" is a lead source, wherever it turns up. It outranks
+    whatever the screenshot's app suggested — a past customer texting through
+    Yelp is not a Yelp lead.
+    """
+    intake["source"] = "Previous Customer"
+    confidence["source"] = 1.0
+
+
+def _apply_typed_previous_customer(intake: dict, confidence: dict, accompanying: str) -> None:
+    """
+    The dispatcher typing "previous customer" is decisive on its own. Done in
+    code because the model sometimes files it as a note or drops it when the
+    screenshot shows a Yelp thread.
+    """
+    if formatting.mentions_previous_customer(accompanying):
+        _set_previous_customer(intake, confidence)
 
 
 #: Phrases that mean "run the failed steps again", NOT "start a new job".
@@ -385,18 +438,6 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
 #: ledger skips the actions that already succeeded. Clearing state on a retry
 #: would re-run all five and double-book the customer.
 _RETRY_WORDS = {"retry", "try again", "run it again", "re-run", "rerun", "resend"}
-
-
-def _drop_screenshot_notes(intake: dict, accompanying: str) -> None:
-    """
-    Notes come from the dispatcher, not the customer.
-
-    The prompt says so; this makes it true when the model disagrees. With no
-    accompanying text there is nowhere legitimate for a note to have come
-    from, so anything present was lifted from the screenshot and goes.
-    """
-    if not accompanying.strip() and intake.pop("job_notes", None):
-        logger.info("Dropped notes extracted from the screenshot — nothing was typed.")
 
 
 def _recover_date(intake: dict, confidence: dict, accompanying: str) -> None:
@@ -510,6 +551,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
 
         intake, confidence = _to_intake(extraction)
         _recover_date(intake, confidence, accompanying)
+        _apply_typed_previous_customer(intake, confidence, accompanying)
         merged = {**intake, **carried}
         progress.done(f"Picked up {len(intake)} details")
         logger.info("Extracted %d usable fields from text", len(intake))
@@ -558,7 +600,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
 
     intake, confidence = _to_intake(extraction)
     _recover_date(intake, confidence, accompanying)
-    _drop_screenshot_notes(intake, accompanying)
+    _apply_typed_previous_customer(intake, confidence, accompanying)
 
     # Deterministic backstop. The prompt above asks the model to defer to OCR;
     # this enforces it for the two fields where a single wrong character is

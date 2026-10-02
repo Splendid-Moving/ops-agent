@@ -141,3 +141,44 @@ def test_the_lookup_runs_above_the_interrupt_and_only_reads():
     body = source.split("def find_existing_contact")[1].split("\n@traceable")[0]
     for write in ("requests.post", "requests.put", "requests.delete"):
         assert write not in body
+
+
+# ── A past move on file makes the lead source Previous Customer ───────────────
+
+PAST = {"id": "c1", "name": "Katherine Caneba", "last_move": "03/14/2025", "since": "2025-01-14"}
+
+
+def test_a_past_move_on_file_sets_previous_customer():
+    intake = confirm_module._with_returning_source(_intake(), PAST)
+    assert intake["source"] == "Previous Customer"
+
+
+def test_the_summary_shows_the_source():
+    intake = confirm_module._with_returning_source(_intake(), PAST)
+    text = confirm_module._summary(intake, {}, None, PAST)
+    assert "Source      Previous Customer" in text
+
+
+def test_an_explicit_source_is_not_overwritten_by_the_lookup():
+    intake = confirm_module._with_returning_source(_intake(source="Referral"), PAST)
+    assert intake["source"] == "Referral"
+
+
+@pytest.mark.parametrize("existing", [
+    None,
+    dict(PAST, last_move=""),                    # a lead that never booked
+    dict(PAST, last_move="12/31/2099"),          # the move hasn't happened yet
+    dict(PAST, name="Sarah Chen"),               # phone matched somebody else
+])
+def test_no_previous_move_means_no_source(existing):
+    intake = confirm_module._with_returning_source(_intake(), existing)
+    assert "source" not in intake
+
+
+def test_approval_carries_the_filled_source_to_the_actions(monkeypatch):
+    """The filled source must reach the calendar's Source: line, not just the summary."""
+    monkeypatch.setattr(confirm_module, "_find_duplicate", lambda _: None)
+    monkeypatch.setattr(confirm_module, "_find_existing_contact", lambda _: PAST)
+    monkeypatch.setattr(confirm_module, "interrupt", lambda _: "yes")
+    command = confirm_module.confirm({"intake": _intake()})
+    assert command.update["intake"]["source"] == "Previous Customer"

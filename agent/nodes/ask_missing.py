@@ -40,7 +40,9 @@ from pydantic import BaseModel, Field
 from agent.models import get_model
 from agent.state import OpsAgentState
 from schemas import checklist as cl
+from services import formatting
 from services.calendar import LA_TZ
+from services.ghl import PICKLIST_VALUES, CustomField
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,15 @@ class ParsedReply(BaseModel):
             "Notes text, one fact per line, each line starting with '- '. "
             "If the user says 'none'/'no'/'nothing', return the empty string — "
             "that is an answer, distinct from not addressing it at all (null)."
+        ),
+    )
+    source: str | None = Field(
+        default=None,
+        description=(
+            "Lead source, only if the dispatcher states it. One of: Yelp, "
+            "Google My Business, Thumbtack, Previous Customer, Local Service Ads, "
+            "Referral. Anything saying the customer has used us before -> "
+            "'Previous Customer', and it then goes here, never in job_notes."
         ),
     )
     unclear: list[str] = Field(
@@ -201,6 +212,12 @@ it", "TBD", "don't have the address yet", "she'll text it" -> the literal \
 string "TBD" for that address. This is a real answer — the dispatcher has \
 decided the job can be booked without it. Do NOT put a city or a ZIP in the \
 address field as a stand-in; "Yorba Linda" is not an address.
+- **Previous customer**: "previous customer", "returning client", "we moved \
+them before" -> source = "Previous Customer". That is the lead source, NEVER a \
+job note, and never repeated in job_notes.
+- **Notes hold what helps the crew** — stairs, parking, access, heavy items, \
+special requests, extra fees. Never the hourly rate or anything that already \
+has its own field.
 - **reply_kind**: judge the message as a whole. A reply can both answer a \
 question AND wander off — if they answered anything at all, it is an "answer".
 
@@ -240,6 +257,20 @@ def _apply(intake: dict, parsed: ParsedReply) -> dict:
     # forever. This is the only field where empty string is a real answer.
     if "job_notes" in updates:
         intake["notes_asked"] = True
+        # Cleaned in code as well as by the prompt: a line saying the customer
+        # is returning becomes the source, and a rate line goes.
+        updates["job_notes"], lifted = formatting.clean_job_notes(updates["job_notes"])
+        if lifted:
+            updates["source"] = lifted
+
+    # The source is a six-option dropdown. Anything else is dropped rather than
+    # written to GHL and the calendar's Source: line.
+    if "source" in updates:
+        normalized = formatting.normalize_source(updates["source"])
+        if normalized in PICKLIST_VALUES[CustomField.ORIGIN]:
+            updates["source"] = normalized
+        else:
+            logger.info("Discarding unrecognised lead source %r", updates.pop("source"))
 
     for name, value in updates.items():
         if spec := cl.BY_NAME.get(name):

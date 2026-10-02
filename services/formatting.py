@@ -299,6 +299,53 @@ def format_notes(raw: str) -> str:
     return "\n".join(items)
 
 
+#: A note line saying the customer has used us before. That is the lead source,
+#: and it belongs on the Source: line — as a note it is invisible to every
+#: source breakdown and colours nothing.
+_PREVIOUS_CUSTOMER_RE = re.compile(
+    r"\b(previous|returning|repeat|past|former|existing|old)\s+(customer|costumer|client)\b"
+    r"|\b(used|hired|booked|moved with)\s+(us|you)\s+(before|last|previously)\b"
+    r"|\bmoved\s+(them|him|her)\s+before\b",
+    re.IGNORECASE,
+)
+
+#: A note line about the hourly rate. The rate has its own field and its own
+#: calendar line, derived from the crew size — repeating it in the notes is
+#: noise at best and a contradiction at worst. Fees ("$50 gas fee") are not
+#: rates and do not match.
+_RATE_RE = re.compile(
+    r"\brates?\b|\bhourly\b|/\s*h(ou)?r\b|\bper\s+hour\b|\ban\s+hour\b"
+    r"|\$\s*\d+\s*cash\b|\bcash\s*/\s*\$?\s*\d+",
+    re.IGNORECASE,
+)
+
+
+def clean_job_notes(raw: str) -> tuple[str, str | None]:
+    """
+    Strip what does not belong in the notes, and say if one of those lines
+    was the lead source.
+
+    Returns (notes, source). `source` is "Previous Customer" when a line said
+    so, else None. Applied to notes from every path — screenshot, typed text,
+    and replies — so the rule holds whichever model call produced them.
+    """
+    kept: list[str] = []
+    source = None
+    for line in format_notes(raw).splitlines():
+        if _PREVIOUS_CUSTOMER_RE.search(line):
+            source = "Previous Customer"
+            continue
+        if _RATE_RE.search(line):
+            continue
+        kept.append(line)
+    return "\n".join(kept), source
+
+
+def mentions_previous_customer(text: str) -> bool:
+    """True when free text says the customer has used us before."""
+    return bool(_PREVIOUS_CUSTOMER_RE.search(text or ""))
+
+
 def normalize_source(raw: str) -> str:
     """
     Canonical lead source for aggregation.
