@@ -174,20 +174,7 @@ def test_notes_that_were_only_a_rate_leave_the_field_unset():
     assert "job_notes" not in intake
 
 
-# ── Our own booking boilerplate never becomes a note ──────────────────────────
-
-@pytest.mark.parametrize("line", [
-    "$50 deposit required and subtracted from total at end of move",   # live, 10/2026
-    "Deposit link sent",
-    "Deposit is non-refundable",
-    "Will receive confirmation email shortly",
-    "2 hour minimum",
-    "minimum of 3 hours",
-])
-def test_booking_boilerplate_is_stripped(line):
-    from services import formatting
-    assert formatting.clean_job_notes(f"- $30 gas fee\n- {line}") == ("- $30 gas fee", None)
-
+# ── The prompt keeps our own booking boilerplate out of notes ──────────────────────────
 
 def test_the_prompt_names_the_deposit_and_our_templates():
     from agent.nodes import extract_screenshot as node

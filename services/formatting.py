@@ -319,18 +319,6 @@ _RATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-#: Our own booking boilerplate, which shows up in nearly every screenshot
-#: because the thread includes our replies: the deposit, the confirmation
-#: email, the hourly minimum. The same on every job, already handled by the
-#: invoice and email steps, and never something the crew needs to read.
-_BOILERPLATE_RE = re.compile(
-    r"\bdeposits?\b|\bconfirmation\s+(email|text|message)\b"
-    r"|\bsubtracted\s+from\b|\b(\d+|two|three)[\s-]*h(ou)?rs?\s+minimum\b"
-    r"|\bminimum\s+(of\s+)?(\d+|two|three)\s*h(ou)?rs?\b",
-    re.IGNORECASE,
-)
-
-
 def clean_job_notes(raw: str) -> tuple[str, str | None]:
     """
     Strip what does not belong in the notes, and say if one of those lines
@@ -346,7 +334,7 @@ def clean_job_notes(raw: str) -> tuple[str, str | None]:
         if _PREVIOUS_CUSTOMER_RE.search(line):
             source = "Previous Customer"
             continue
-        if _RATE_RE.search(line) or _BOILERPLATE_RE.search(line):
+        if _RATE_RE.search(line):
             continue
         kept.append(line)
     return "\n".join(kept), source
