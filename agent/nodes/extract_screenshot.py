@@ -228,8 +228,18 @@ treadmill, large TV, antiques, glass, artwork
 materials
 
 NOT a note — leave these out even when they are on screen:
-  - the hourly rate, a quote, a price per hour, cash/card pricing, the \
-deposit — rates have their own field
+  - the hourly rate, a quote, a price per hour, cash/card pricing — rates \
+have their own field
+  - ANYTHING about the deposit — its amount, that it is required, that it is \
+subtracted from the total, the deposit link. The deposit is the same on every \
+job and is invoiced automatically. Never a note, in any wording.
+  - our own standard replies in the thread: "you will receive your \
+confirmation email & deposit link shortly", "please send your name, phone \
+number, email and addresses", hourly minimums, payment methods. Messages from \
+Splendid Moving's side are mostly templates; notes come from what the \
+CUSTOMER says and what the staff member typed.
+  - app interface text: Yelp's "Were you hired for this job?", "Confirm \
+appointment", "Yes / No / Not yet", "Write a response", read receipts
   - anything that already has a field: name, phone, email, date, arrival \
 time, addresses, crew size, move size, labor-only
   - the lead source, including "previous customer"
