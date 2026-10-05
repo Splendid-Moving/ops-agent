@@ -154,9 +154,6 @@ def daily_reset() -> bool:
 #: Depot address — used for the >30mi early-slot rule.
 DEPOT_ADDRESS = "909 Beacon Ave, Los Angeles, CA"
 
-#: Minimum days between "today" and an acceptable move date.
-MIN_LEAD_DAYS = 2
-
 
 def deposit_amount() -> float:
     """Dollar amount of the deposit INVOICE. Not what goes on the calendar."""

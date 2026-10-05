@@ -75,8 +75,6 @@ occasionally with an extra stop.
 - Deposit is **${config.deposit_amount():.0f}**, the same on every job, texted \
 to the customer as a payment link. It comes off the final balance.
 - Capacity is 9 jobs a day: 6 morning, 3 afternoon.
-- Bookings normally need at least {config.MIN_LEAD_DAYS} days' notice, though \
-shorter is possible.
 
 ## Where things live
 

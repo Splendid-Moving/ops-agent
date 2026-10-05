@@ -86,14 +86,11 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
     # A phone that resolves to someone else's record is the dangerous case: the
     # booking would quietly overwrite a different customer's details, and every
     # other check passes because the data itself is perfectly valid.
+    # Just so the dispatcher knows which record gets updated. Usually harmless
+    # (a nickname, a spouse, a contact saved under an email), so one line.
     if existing and not _same_person(name, existing.get("name", "")):
-        lines += [
-            "",
-            "⚠️  That phone/email already belongs to a different name in GoHighLevel:",
-            f"     on file: {existing.get('name') or '(no name)'}",
-            f"     booking: {name}",
-            "     Going ahead updates that contact rather than creating a new one.",
-        ]
+        on_file = existing.get("name") or "no name"
+        lines += ["", f"FYI: this updates an existing GoHighLevel contact ({on_file})."]
 
     if duplicate:
         lines += [

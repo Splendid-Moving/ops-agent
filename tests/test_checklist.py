@@ -161,11 +161,12 @@ def test_unparseable_date_rejected():
     assert "move_date" in result.invalid
 
 
-def test_short_lead_time_warns_but_does_not_block():
-    """Same-day jobs happen. The human decides at the confirm gate."""
-    tomorrow = (datetime.now(LA_TZ) + timedelta(days=1)).strftime("%m/%d/%Y")
-    result = cl.evaluate({**COMPLETE_MOVE, "move_date": tomorrow})
-    assert "move_date" in result.warnings
+@pytest.mark.parametrize("days_out", [0, 1])
+def test_short_notice_is_a_normal_booking(days_out):
+    """There is no minimum lead time. Today and tomorrow get no warning at all."""
+    day = (datetime.now(LA_TZ) + timedelta(days=days_out)).strftime("%m/%d/%Y")
+    result = cl.evaluate({**COMPLETE_MOVE, "move_date": day})
+    assert "move_date" not in result.warnings
     assert "move_date" not in result.invalid
     assert result.is_complete
 

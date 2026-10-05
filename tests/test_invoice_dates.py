@@ -6,8 +6,8 @@ create_invoice derived the due date from `now`. Every move further out than
 tomorrow therefore asked GHL to issue an invoice after its own due date, which
 it refuses with "Issue date cannot be after due date".
 
-Nothing caught it. The checklist enforces a 2-day minimum lead time, so the
-failing case was the NORMAL case and the passing case was the rare one. The
+Nothing caught it. Most moves are booked more than a day out, so the failing
+case was the NORMAL case and the passing case was the rare one. The
 contact, the calendar event and the confirmation email all succeeded, so the
 customer got a booking confirmation promising a payment link that never arrived.
 """

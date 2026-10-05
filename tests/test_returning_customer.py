@@ -58,16 +58,16 @@ def test_a_contact_with_no_recorded_move_falls_back_to_the_join_date():
 
 # ── The dangerous case ─────────────────────────────────────────────────────────
 
-def test_a_phone_matching_a_different_name_is_flagged():
+def test_a_phone_matching_a_different_name_is_mentioned_in_one_line():
     """
-    The whole reason this is worth building. Nothing else in the system can
-    catch it — the booking is valid, it is just attached to the wrong person.
+    Worth knowing which record gets updated, but usually harmless — a
+    nickname, a spouse, a contact saved under an email. One FYI line, no alarm.
     """
-    existing = dict(RETURNING, name="Sarah Chen")
+    existing = dict(RETURNING, name="bosshouse777@gmail.com")
     text = confirm_module._summary(_intake(), {}, None, existing)
-    assert "different name" in text
-    assert "Sarah Chen" in text
-    assert "Katherine Caneba" in text
+    line = "FYI: this updates an existing GoHighLevel contact (bosshouse777@gmail.com)."
+    assert line in text
+    assert "⚠️  That phone" not in text
 
 
 @pytest.mark.parametrize("on_file", [
@@ -78,7 +78,7 @@ def test_a_phone_matching_a_different_name_is_flagged():
 def test_casing_and_spacing_are_not_treated_as_a_different_person(on_file):
     """A false alarm on every returning customer would train people to ignore it."""
     text = confirm_module._summary(_intake(), {}, None, dict(RETURNING, name=on_file))
-    assert "different name" not in text
+    assert "FYI: this updates" not in text
 
 
 # ── The lookup itself ──────────────────────────────────────────────────────────

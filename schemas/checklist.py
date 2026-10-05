@@ -19,9 +19,9 @@ RULES ENCODED HERE
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 
-from services import config, formatting, rates
+from services import formatting, rates
 from services.calendar import LA_TZ
 
 # ── Validators ─────────────────────────────────────────────────────────────────
@@ -55,10 +55,8 @@ def valid_name(value: str) -> str | None:
 
 def valid_move_date(value: str) -> str | None:
     """
-    Parseable, not in the past, and inside the 2-day minimum lead time.
-
-    Lead time is a warning rather than a hard failure — same-day jobs do happen
-    and the confirm gate is where a human decides.
+    Parseable and not in the past. There is no minimum notice — same-day and
+    next-day jobs are normal bookings, not something to warn about.
     """
     parsed = formatting.parse_date(value)
     if parsed is None:
@@ -68,11 +66,6 @@ def valid_move_date(value: str) -> str | None:
     today = datetime.now(LA_TZ).date()
     if move_day < today:
         return f"{value} is in the past."
-    if move_day < today + timedelta(days=config.MIN_LEAD_DAYS):
-        return (
-            f"NOTE: {value} is inside the usual {config.MIN_LEAD_DAYS}-day lead time. "
-            "Fine if intended."
-        )
     return None
 
 
