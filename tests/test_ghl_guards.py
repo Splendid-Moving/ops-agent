@@ -104,17 +104,15 @@ def test_every_picklist_id_is_a_real_field():
     assert set(PICKLIST_VALUES).issubset(known)
 
 
-# ── Who the invoice text is signed by ──────────────────────────────────────────
+# ── Invoice text is signed exactly once ────────────────────────────────────────
 
-def test_invoice_send_signs_as_the_company(monkeypatch):
+def test_invoice_send_does_not_add_a_second_company_signature(monkeypatch):
     """
-    GHL writes the invoice SMS itself and signs it with `sentFrom.fromName`.
-    Drop that object and it signs with whoever `userId` points at — one staff
-    member's personal name — so the customer gets "Best, Adilet Almedino"
-    instead of "Best, Splendid Moving".
+    The account's default invoice SMS already signs as Splendid Moving. Adding
+    a `sentFrom` object makes GHL append that same company name a second time.
+    The visible result is "Best, Splendid Moving Splendid Moving".
 
-    Nothing catches this in CI: the send returns 201 either way. It is only
-    visible on the customer's phone.
+    The request is faked: no invoice or text is sent while testing this.
     """
     from services import config, ghl
 
@@ -137,16 +135,4 @@ def test_invoice_send_signs_as_the_company(monkeypatch):
 
     ghl.send_invoice("inv_123", action="sms")
 
-    assert sent["sentFrom"]["fromName"] == "Splendid Moving"
-    assert "@" in sent["sentFrom"]["fromEmail"]
-
-
-def test_invoice_sender_name_is_not_a_person():
-    """
-    A tempting 'fix' for a sender-name complaint is to point it at a different
-    staff member. That still puts an individual's name on every customer's
-    payment text. The value belongs to the company.
-    """
-    from services import ghl
-
-    assert ghl.INVOICE_SENDER_NAME == "Splendid Moving"
+    assert "sentFrom" not in sent

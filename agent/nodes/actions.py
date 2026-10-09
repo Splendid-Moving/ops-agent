@@ -320,8 +320,8 @@ def first_name(intake: dict) -> str:
     through /conversations/messages, which sends exactly the characters it is
     given. A customer receiving "Hi {first_name}," is worse than no text at all.
     """
-    parts = str(intake.get("full_name") or "").split()
-    return parts[0] if parts else "there"
+    first, _ = formatting.split_name(intake.get("full_name", ""))
+    return first or "there"
 
 
 @action(ACTION_SMS)

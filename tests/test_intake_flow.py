@@ -17,7 +17,9 @@ import pytest
 
 from agent.nodes import ask_missing as ask_module
 from agent.nodes import confirm as confirm_module
+from agent.nodes import extract_screenshot as extract_module
 from agent.nodes import validate_checklist as validate_module
+from schemas.intake import ExtractedField, ScreenshotExtraction
 
 
 # ── Structural: no side effects above interrupt() ──────────────────────────────
@@ -26,6 +28,14 @@ SIDE_EFFECT_MARKERS = (
     "upsert_contact", "create_invoice", "send_invoice", "send_sms", "send_email",
     "create_event", "requests.post", "requests.put", "requests.delete",
 )
+
+
+def test_an_all_caps_screenshot_name_is_normalized_in_the_intake_record():
+    """A name read from an image is ready for every downstream customer-facing use."""
+    intake, _ = extract_module._to_intake(ScreenshotExtraction(
+        full_name=ExtractedField(value="JANE O'NEILL", confidence=1.0),
+    ))
+    assert intake["full_name"] == "Jane O'Neill"
 
 
 def _source(module) -> str:

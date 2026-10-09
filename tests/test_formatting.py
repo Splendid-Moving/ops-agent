@@ -128,6 +128,22 @@ def test_format_address_collapses_whitespace():
 # ── Names ──────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("JANE DOE", "Jane Doe"),
+        ("jane doe", "Jane Doe"),
+        ("JANE O'NEILL", "Jane O'Neill"),
+        ("ANNE-MARIE SMITH", "Anne-Marie Smith"),
+        ("  MARIA   DE LA CRUZ  ", "Maria De La Cruz"),
+        ("Cher", "Cher"),
+    ],
+)
+def test_normalize_name_uses_readable_customer_casing(raw, expected):
+    """Names from screenshots and dispatcher replies never reach customers in caps."""
+    assert formatting.normalize_name(raw) == expected
+
+
+@pytest.mark.parametrize(
     "full,expected",
     [
         ("Sarah Chen", ("Sarah", "Chen")),
@@ -138,6 +154,11 @@ def test_format_address_collapses_whitespace():
 )
 def test_split_name(full, expected):
     assert formatting.split_name(full) == expected
+
+
+def test_split_name_normalizes_both_contact_name_parts():
+    """GHL gets readable first and last names even when the source was all caps."""
+    assert formatting.split_name("JANE DE LA CRUZ") == ("Jane", "De La Cruz")
 
 
 # ── Dates ──────────────────────────────────────────────────────────────────────

@@ -238,6 +238,12 @@ but they are priced by hand.
 `{{contact.*}}` when GHL itself sends a template; this agent posts raw HTML, so
 a merge tag would reach the customer literally.
 
+**Customer names are normalized once, at intake.** Screenshot and chat replies
+such as `JANE O'NEILL` become `Jane O'Neill` before they reach GoHighLevel, the
+calendar, the confirmation email, or a text. The deposit-link SMS relies on
+GoHighLevel's default invoice sender once, so the company name is not repeated
+at the sign-off.
+
 **Conversations expire daily.** A thread whose last activity was on an earlier
 Los Angeles date is discarded on the next message, before anything reads it.
 This is a check on the way in rather than a job scheduled at 00:00 — a timer

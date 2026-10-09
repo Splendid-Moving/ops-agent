@@ -151,6 +151,7 @@ CHECKLIST: tuple[FieldSpec, ...] = (
         required_for=("contact", "calendar", "invoice", "email"),
         ask="What's the customer's full name?",
         validator=valid_name,
+        normalizer=formatting.normalize_name,
         examples=("Sarah Chen", "Maria De La Cruz"),
     ),
     FieldSpec(

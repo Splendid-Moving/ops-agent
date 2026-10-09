@@ -389,8 +389,10 @@ def _to_intake(extraction: ScreenshotExtraction) -> tuple[dict, dict[str, float]
         if name in intake:
             intake[name] = cl.normalize_address(intake[name])
 
-    # Normalise the two fields with a canonical form, so downstream comparison
+    # Normalise the core identity fields with canonical forms, so downstream comparison
     # and duplicate detection work on consistent values.
+    if intake.get("full_name"):
+        intake["full_name"] = formatting.normalize_name(intake["full_name"])
     if intake.get("phone"):
         intake["phone"] = formatting.format_phone(intake["phone"])
     # The dropdown has six options and the model reaches for others — "SMS" and

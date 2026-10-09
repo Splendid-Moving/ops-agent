@@ -386,7 +386,7 @@ def test_a_sent_text_is_never_sent_twice(intake, spy):
 @pytest.mark.parametrize(
     "full_name,expected",
     [("Sarah Chen", "Sarah"), ("Nik", "Nik"), ("  Jordan  Lee ", "Jordan"),
-     ("", "there"), (None, "there")],
+     ("JANE DOE", "Jane"), ("", "there"), (None, "there")],
 )
 def test_the_greeting_uses_their_first_name(full_name, expected):
     """

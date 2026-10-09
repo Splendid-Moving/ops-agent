@@ -91,6 +91,12 @@ def test_an_answer_still_counts_even_if_the_model_calls_it_off_topic(monkeypatch
     assert "_aside" not in out
 
 
+def test_a_typed_all_caps_name_is_normalized_before_it_reaches_the_booking(monkeypatch):
+    """Follow-up answers use the same readable customer-name format as screenshots."""
+    out = _run(monkeypatch, {}, "JANE O'NEILL", _reply(full_name="JANE O'NEILL"))
+    assert out["full_name"] == "Jane O'Neill"
+
+
 def test_an_unparseable_reply_still_counts_as_an_attempt(monkeypatch):
     """A model failure is not evidence the user was off topic."""
     out = _run(monkeypatch, _incomplete(), "asdfgh", None)

@@ -247,9 +247,20 @@ def format_deposit(amount: float | str) -> str:
     return f"{value:g}"
 
 
+def normalize_name(raw: str) -> str:
+    """
+    Put a customer name into readable title case at the agent boundary.
+
+    Screenshot OCR and copied chat messages often arrive in all caps. Python's
+    title casing keeps compound surnames, apostrophes, and hyphens readable
+    without trying to guess a family's own spelling convention.
+    """
+    return " ".join(str(raw or "").split()).title()
+
+
 def split_name(full_name: str) -> tuple[str, str]:
-    """Split a full name into (first, last). Everything after the first token is last."""
-    parts = str(full_name or "").strip().split()
+    """Normalize then split a full name. Everything after the first token is last."""
+    parts = normalize_name(full_name).split()
     if not parts:
         return "", ""
     if len(parts) == 1:

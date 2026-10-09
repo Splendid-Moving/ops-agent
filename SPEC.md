@@ -112,8 +112,37 @@ FAILURE (any of these = not done):
   `VERCEL_PROJECT_ID`; add `VERCEL_TEAM_ID` if the project belongs to a team
   rather than a personal account. Same variables go into Railway.
 
+## Maintenance change: customer-facing invoice text and names
+
+GOAL: Every deposit-link SMS contains the company name once at the sign-off,
+and a customer name received as `JANE DOE`, `jane doe`, or `JANE O'NEILL`
+appears as `Jane Doe` or `Jane O'Neill` throughout the booking.
+
+CONSTRAINTS: Keep GoHighLevel's account-level default invoice notification in
+place; do not send a live invoice merely to test wording. Use Python's standard
+library for the casing rule, so this narrow formatting change adds no dependency.
+
+FORMAT: The invoice send request relies on the account's existing sender and
+template once, and name normalization happens while the intake record is formed
+from both screenshots and typed follow-up answers.
+
+FAILURE (any of these = not done):
+- The send payload adds a second sender name to GoHighLevel's default invoice
+  notification.
+- An uppercase or lowercase extracted or corrected full name reaches the GHL
+  first/last-name fields, calendar, email, or customer SMS unnormalized.
+- A single-name customer, apostrophe, hyphen, or middle/compound surname is
+  lost or split incorrectly.
+- A test sends a real invoice, contact, or SMS.
+
 ## Status
-_Updated: 2026-09-24_
+_Updated: 2026-10-09_
+- Maintenance change complete: the deposit invoice send payload no longer adds
+  a second `sentFrom` signature to GoHighLevel's default invoice SMS. Customer
+  names are normalized at both intake boundaries (screenshot extraction and
+  typed replies), with a final safeguard when the GHL first/last-name fields
+  are made. Verified offline with 617 passing tests; no real invoice, contact,
+  or SMS was sent to test it.
 - Built: **all five phases; the lane is live.** `services/vercel.py`,
   `agent/nodes/site_traffic.py`, the `site` router intent and the graph edge.
   37 tests (26 offline + 11 live routing). All four GOAL questions answered
