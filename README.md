@@ -3,8 +3,6 @@
 An internal assistant the team talks to in **Google Chat**. It answers questions
 about jobs, and it books new ones from a screenshot of a customer enquiry.
 
-New to the codebase? Read **[LEARN.md](LEARN.md)** first — it explains how the
-whole thing works and why it is shaped this way.
 
 ---
 
