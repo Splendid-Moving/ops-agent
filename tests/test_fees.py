@@ -15,8 +15,8 @@ from services.fees import parse_fees
 
 
 def test_reads_each_kind_from_its_own_line():
-    f = parse_fees("- Gas fee $50\n- Piano $150\n- Discount $20")
-    assert (f.gas_fee, f.heavy_item_fee, f.discount) == (50, 150, 20)
+    f = parse_fees("- Gas fee $50\n- Piano $150\n- Discount 10%")
+    assert (f.gas_fee, f.heavy_item_fee, f.discount_percent) == (50, 150, 10)
     assert f.unclear == []
 
 
@@ -32,8 +32,15 @@ def test_dollar_sign_after_the_number():
     assert parse_fees("- gas 50$").gas_fee == 50
 
 
-def test_amount_off_is_a_discount():
-    assert parse_fees("- $20 off, returning customer").discount == 20
+def test_percent_off_is_a_discount():
+    assert parse_fees("- 15% off, returning customer").discount_percent == 15
+
+
+def test_dollar_discount_is_reported_not_converted():
+    # The app keeps the discount as a percent; $20 can't be turned into one.
+    f = parse_fees("- $20 off")
+    assert f.discount_percent is None
+    assert f.unclear == ["$20 off"]
 
 
 @pytest.mark.parametrize("notes", [
@@ -55,10 +62,10 @@ def test_two_kinds_on_one_line_are_reported_not_guessed():
     assert f.unclear == ["gas $50 and piano $150"]
 
 
-def test_percent_discount_is_reported_not_converted():
+def test_percent_discount():
     f = parse_fees("- 10% discount")
-    assert f.discount is None
-    assert f.unclear == ["10% discount"]
+    assert f.discount_percent == 10
+    assert f.unclear == []
 
 
 @pytest.fixture
@@ -80,7 +87,7 @@ def test_payload_carries_the_fees_and_keeps_the_notes(intake):
     payload = actions.app_job_payload(intake)
     assert payload["gas_fee"] == 50
     assert payload["heavy_item_fee"] == 150
-    assert payload["discount"] is None
+    assert payload["discount_percent"] is None
     assert "Gas fee $50" in payload["job_notes"]
 
 
@@ -109,3 +116,15 @@ def test_summary_quiet_when_the_app_is_not_connected(intake, monkeypatch):
     monkeypatch.delenv("JOBS_APP_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("JOBS_APP_WEBHOOK_SECRET", raising=False)
     assert "App fees" not in confirm._summary(intake, {}, None)
+
+
+def test_payload_sends_discount_as_percent_number(intake):
+    intake["job_notes"] = "- 10% discount"
+    assert actions.app_job_payload(intake)["discount_percent"] == 10
+
+
+def test_summary_shows_percent(intake, monkeypatch):
+    monkeypatch.setenv("JOBS_APP_WEBHOOK_URL", "https://script.google.com/macros/s/x/exec")
+    monkeypatch.setenv("JOBS_APP_WEBHOOK_SECRET", "s3cret")
+    intake["job_notes"] = "- Gas fee $50\n- 10% off"
+    assert "App fees    Gas $50 · Discount 10%" in confirm._summary(intake, {}, None)

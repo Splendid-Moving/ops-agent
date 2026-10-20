@@ -12,7 +12,9 @@ Deliberately strict, because a wrong fee is worse than a missing one:
   - A note line is read only if it names exactly one kind of fee. A line like
     "gas $50 and piano $150" is ambiguous, so it is skipped and reported, and
     the office fills that one in by hand.
-  - Percent discounts are reported, not converted — the base is not known yet.
+  - The crew app stores the discount as a PERCENT (discount_percent). "10% off"
+    / "10% discount" is sent as 10. A dollar discount ("$20 off") has no column
+    to go in, so it is reported, not converted.
 
 The confirm summary shows what was read, so the dispatcher sees the numbers
 before anything is created.
@@ -31,11 +33,11 @@ _KINDS: dict[str, re.Pattern] = {
     "discount": re.compile(r"\b(discount|off)\b", re.IGNORECASE),
 }
 
-LABELS = {"gas_fee": "Gas", "heavy_item_fee": "Heavy item", "discount": "Discount"}
+LABELS = {"gas_fee": "Gas", "heavy_item_fee": "Heavy item", "discount_percent": "Discount"}
 
 # "$50", "$ 50", "$1,200.50", "50$"
 _MONEY = re.compile(r"\$\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*\$")
-_PERCENT = re.compile(r"\d+(?:\.\d+)?\s*%")
+_PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
 # A clause ends at a newline, ";", or ", " — never at the "." inside "$50.00".
 _CLAUSE_SPLIT = re.compile(r"\n|;|,\s+|\.\s+|\s+\|\s+")
@@ -45,20 +47,21 @@ _CLAUSE_SPLIT = re.compile(r"\n|;|,\s+|\.\s+|\s+\|\s+")
 class Fees:
     gas_fee: float | None = None
     heavy_item_fee: float | None = None
-    discount: float | None = None
+    discount_percent: float | None = None
     #: Note text that mentions a fee but could not be read safely.
     unclear: list[str] = field(default_factory=list)
 
     def any(self) -> bool:
-        return any(v for v in (self.gas_fee, self.heavy_item_fee, self.discount))
+        return any(v for v in (self.gas_fee, self.heavy_item_fee, self.discount_percent))
 
     def summary(self) -> str:
         """'Gas $50 · Heavy item $150' — empty if nothing was read."""
         parts = []
-        for key in ("gas_fee", "heavy_item_fee", "discount"):
+        for key in ("gas_fee", "heavy_item_fee", "discount_percent"):
             value = getattr(self, key)
             if value:
-                parts.append(f"{LABELS[key]} {_money(value)}")
+                shown = f"{value:g}%" if key == "discount_percent" else _money(value)
+                parts.append(f"{LABELS[key]} {shown}")
         return " · ".join(parts)
 
 
@@ -96,15 +99,21 @@ def parse_fees(notes: str) -> Fees:
 
         amounts = _amounts(text)
         if len(kinds) > 1:
-            if amounts:
+            if amounts or _PERCENT.search(text):
                 fees.unclear.append(text)
             continue
         kind = kinds[0]
-        if not amounts:
-            if kind == "discount" and _PERCENT.search(text):
-                fees.unclear.append(text)
+
+        if kind == "discount":
+            percents = _PERCENT.findall(text)
+            if len(percents) == 1 and not amounts and 0 < float(percents[0]) < 100:
+                fees.discount_percent = float(percents[0])
+            elif percents or amounts:
+                fees.unclear.append(text)   # "$20 off", or two numbers
             continue
-        totals[kind] = totals.get(kind, 0.0) + sum(amounts)
+
+        if amounts:
+            totals[kind] = totals.get(kind, 0.0) + sum(amounts)
 
     for kind, total in totals.items():
         if total > 0:

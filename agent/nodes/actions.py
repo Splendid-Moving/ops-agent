@@ -325,7 +325,7 @@ def app_job_payload(intake: dict, contact_id: str = "") -> dict:
         # Read from the notes so the bill includes them; the notes keep the text.
         "gas_fee": office_fees.gas_fee,
         "heavy_item_fee": office_fees.heavy_item_fee,
-        "discount": office_fees.discount,
+        "discount_percent": office_fees.discount_percent,   # 10 means 10%
     }
 
 
