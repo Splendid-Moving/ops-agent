@@ -21,8 +21,9 @@ exactly what it is about to do, and only then:
 
 1. Creates or updates the **GoHighLevel contact**
 2. Books the **calendar event**
-3. Texts the customer a **$50 deposit invoice**
-4. Sends the **confirmation email**
+3. Adds the job to the **crew app** (AppSheet) — when `JOBS_APP_WEBHOOK_URL` is set
+4. Texts the customer a **$50 deposit invoice**
+5. Sends the **confirmation email**
 
 Nothing happens until you reply `yes`.
 

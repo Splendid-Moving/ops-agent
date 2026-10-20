@@ -9,9 +9,10 @@ formatting, the interrupt, and the routing decision. No API calls, no writes,
 nothing that could fire twice — because on every resume this node re-runs from
 the top.
 
-This is the last checkpoint before five irreversible things happen: a CRM
-contact, a calendar booking, an invoice text to the customer, a confirmation
-email, and a text telling the customer the last two went out. Everything shown
+This is the last checkpoint before up to six irreversible things happen: a
+CRM contact, a calendar booking, the job in the crew app (when connected), an
+invoice text to the customer, a confirmation email, and a text telling the
+customer the last two went out. Everything shown
 here should be everything that will happen.
 """
 
@@ -65,15 +66,21 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
     if intake.get("job_notes"):
         lines.append(f"  Notes       {intake['job_notes']}")
 
-    lines += [
-        "",
-        "That means:",
-        "  1. Create or update the contact in GoHighLevel",
-        "  2. Book the calendar event",
-        f"  3. Text them a ${deposit:.0f} deposit invoice",
-        "  4. Send the confirmation email",
-        "  5. Text them to say the email and the deposit link have gone out",
+    steps = [
+        "Create or update the contact in GoHighLevel",
+        "Book the calendar event",
     ]
+    # Only promised when it will actually happen — an unconnected deployment
+    # skips this step, and the summary must not claim otherwise.
+    if config.jobs_app_enabled():
+        steps.append("Add the job to the crew app")
+    steps += [
+        f"Text them a ${deposit:.0f} deposit invoice",
+        "Send the confirmation email",
+        "Text them to say the email and the deposit link have gone out",
+    ]
+    lines += ["", "That means:"]
+    lines += [f"  {n}. {step}" for n, step in enumerate(steps, start=1)]
 
     # Anything Google couldn't confirm outright — the wrong-city failure mode.
     if unresolved := unresolved_addresses(intake):

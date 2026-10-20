@@ -1,5 +1,5 @@
 """
-The five side effects: idempotency, partial failure, and precise retry.
+The side effects: idempotency, partial failure, and precise retry.
 
 These are the highest-value tests in the project. Everything else produces a
 wrong answer when it breaks; these produce a customer charged twice, or a truck
@@ -205,12 +205,13 @@ def test_no_contact_means_skip_straight_to_report():
     assert actions.contact_gate({"ledger": ledger}) == "report"
 
 
-def test_contact_success_fans_out_to_all_three():
+def test_contact_success_fans_out_to_all_four():
     ledger = merge_ledger(
         new_ledger(), {ACTION_CONTACT: {"status": "success", "result": {"contact_id": "c1"}}}
     )
     assert actions.contact_gate({"ledger": ledger}) == actions.FAN_OUT
-    assert len(actions.FAN_OUT) == 3
+    assert len(actions.FAN_OUT) == 4
+    assert "act_app_job" in actions.FAN_OUT
 
 
 def test_invoice_refuses_without_a_contact_id(intake):
@@ -398,7 +399,7 @@ def test_the_greeting_uses_their_first_name(full_name, expected):
     assert "{" not in actions.CUSTOMER_SMS.format(first_name=expected)
 
 
-def test_the_report_counts_all_five_steps_and_explains_a_skip(intake, spy):
+def test_the_report_counts_every_step_and_explains_a_skip(intake, spy):
     ledger = _ledger_with(**{ACTION_CALENDAR: "success", ACTION_EMAIL: "failed",
                              ACTION_INVOICE: "success"})
     ledger = merge_ledger(ledger, actions.act_customer_sms(
@@ -407,5 +408,5 @@ def test_the_report_counts_all_five_steps_and_explains_a_skip(intake, spy):
     text = actions.report({"intake": intake, "ledger": ledger})["messages"][0].content
 
     assert f"of {len(ALL_ACTIONS)} steps failed" in text
-    assert "1 of 5" in text, "a skipped text is not a failed step"
+    assert f"1 of {len(ALL_ACTIONS)}" in text, "a skipped text is not a failed step"
     assert "Text to the customer" in text and "not sent" in text
