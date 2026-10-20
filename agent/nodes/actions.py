@@ -45,7 +45,7 @@ from agent.state import (
 )
 from schemas import checklist as cl
 from schemas import email_template
-from services import calendar, config, formatting, ghl, jobs_app, maps, rates
+from services import calendar, config, fees, formatting, ghl, jobs_app, maps, rates
 from services.ghl import CustomField
 
 logger = logging.getLogger(__name__)
@@ -292,6 +292,7 @@ def app_job_payload(intake: dict, contact_id: str = "") -> dict:
     extra_stop = _address_or_blank(intake.get("extra_stop", ""))
 
     rate = rates.rate_for(intake.get("movers", ""))
+    office_fees = fees.parse_fees(intake.get("job_notes", ""))
 
     notes = [f"Arrival window: {intake.get('arrival_time', '').strip()}"]
     if is_labor:
@@ -321,6 +322,10 @@ def app_job_payload(intake: dict, contact_id: str = "") -> dict:
         "card_rate_per_hour": rate.card if rate else None,
         "lead_source": (intake.get("source") or "").strip(),
         "job_notes": "\n".join(notes),
+        # Read from the notes so the bill includes them; the notes keep the text.
+        "gas_fee": office_fees.gas_fee,
+        "heavy_item_fee": office_fees.heavy_item_fee,
+        "discount_percent": office_fees.discount_percent,   # 10 means 10%
     }
 
 

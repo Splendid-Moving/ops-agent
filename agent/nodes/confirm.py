@@ -26,7 +26,7 @@ from agent.nodes.resolve_addresses import unresolved_addresses
 from agent.state import OpsAgentState
 from schemas import checklist as cl
 from schemas.intake import EDITABLE_FIELDS
-from services import calendar, config, formatting, ghl, rates
+from services import calendar, config, fees, formatting, ghl, rates
 from services.calendar import LA_TZ
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,13 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
         lines.append(f"  Source      {intake['source']}")
     if intake.get("job_notes"):
         lines.append(f"  Notes       {intake['job_notes']}")
+        # The crew app bills from these numbers, so show exactly what was read.
+        if config.jobs_app_enabled():
+            office_fees = fees.parse_fees(intake["job_notes"])
+            if office_fees.any():
+                lines.append(f"  App fees    {office_fees.summary()}")
+            for text in office_fees.unclear:
+                lines.append(f"  ⚠️ Fee not read: \"{text}\" — add it in the app by hand")
 
     steps = [
         "Create or update the contact in GoHighLevel",
