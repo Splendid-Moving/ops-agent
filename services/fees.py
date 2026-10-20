@@ -9,9 +9,9 @@ dollar amounts out so the app gets them as numbers.
 Deliberately strict, because a wrong fee is worse than a missing one:
   - Only amounts written with "$" count ("$50", "50$"). "3rd floor" or
     "2 trucks" can never become a fee.
-  - A note line is read only if it names exactly one kind of fee. A line like
-    "gas $50 and piano $150" is ambiguous, so it is skipped and reported, and
-    the office fills that one in by hand.
+  - Each fee must sit in its own piece of the note. "$150 heavy fee and $70
+    gas fee" is split on "and"; a line that still mixes two kinds after that
+    ("gas and piano $200") is skipped and reported, and the office fills it in.
   - The crew app stores the discount as a PERCENT (discount_percent). "10% off"
     / "10% discount" is sent as 10. A dollar discount ("$20 off") has no column
     to go in, so it is reported, not converted.
@@ -41,6 +41,8 @@ _PERCENT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
 # A clause ends at a newline, ";", or ", " — never at the "." inside "$50.00".
 _CLAUSE_SPLIT = re.compile(r"\n|;|,\s+|\.\s+|\s+\|\s+")
+# Inside a clause naming two kinds of fee: "$150 heavy fee and $70 gas fee".
+_AND_SPLIT = re.compile(r"\s+(?:and|plus|&|\+)\s+", re.IGNORECASE)
 
 
 @dataclass
@@ -80,20 +82,50 @@ def _amounts(text: str) -> list[float]:
     return out
 
 
-def parse_fees(notes: str) -> Fees:
-    fees = Fees()
-    totals: dict[str, float] = {}
+def _kinds(text: str) -> list[str]:
+    kinds = [k for k, rx in _KINDS.items() if rx.search(text)]
+    # "off" alone is too common ("drop off", "off-street") to count as a
+    # discount unless a money amount or percent sits next to it.
+    if "discount" in kinds and not re.search(r"\bdiscount\b", text, re.IGNORECASE):
+        if not re.search(r"(\$\s*\d[\d,.]*|\d[\d,.]*\s*\$|\d+\s*%)\s*off\b", text, re.IGNORECASE):
+            kinds.remove("discount")
+    return kinds
 
+
+def _clauses(notes: str) -> list[str]:
+    """
+    Note text cut into pieces that each name at most one kind of fee, where
+    that can be done safely. A piece naming two kinds is split on "and" /
+    "plus" / "&" — but only if every resulting part then names exactly one
+    kind and carries its own amount; otherwise it stays whole and is reported
+    as unclear.
+    """
+    out = []
     for clause in _CLAUSE_SPLIT.split(str(notes or "")):
         text = clause.strip().lstrip("-•*").strip()
         if not text:
             continue
-        kinds = [k for k, rx in _KINDS.items() if rx.search(text)]
-        # "off" alone is too common ("drop off", "off-street") to count as a
-        # discount unless a money amount or percent sits next to it.
-        if "discount" in kinds and not re.search(r"\bdiscount\b", text, re.IGNORECASE):
-            if not re.search(r"(\$\s*\d[\d,.]*|\d[\d,.]*\s*\$|\d+\s*%)\s*off\b", text, re.IGNORECASE):
-                kinds.remove("discount")
+        if len(_kinds(text)) > 1:
+            parts = [p.strip() for p in _AND_SPLIT.split(text) if p.strip()]
+            # Every part needs its own kind AND its own number, so
+            # "gas and piano $200" can never hand all $200 to the piano.
+            if len(parts) > 1 and all(
+                len(_kinds(p)) == 1 and (_amounts(p) or _PERCENT.search(p)) for p in parts
+            ):
+                out.extend(parts)
+                continue
+        out.append(text)
+    return out
+
+
+def parse_fees(notes: str) -> Fees:
+    fees = Fees()
+    totals: dict[str, float] = {}
+
+    for text in _clauses(notes):
+        if not text:
+            continue
+        kinds = _kinds(text)
         if not kinds:
             continue
 

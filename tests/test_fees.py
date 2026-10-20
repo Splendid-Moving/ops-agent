@@ -56,10 +56,22 @@ def test_nothing_without_a_dollar_amount(notes):
     assert not f.any() and f.unclear == []
 
 
-def test_two_kinds_on_one_line_are_reported_not_guessed():
-    f = parse_fees("- gas $50 and piano $150")
+def test_two_fees_joined_by_and_are_both_read():
+    # The agent often rewrites the notes into one sentence like this.
+    f = parse_fees("- $150 heavy fee and $70 gas fee mentioned by staff for this job.")
+    assert (f.heavy_item_fee, f.gas_fee) == (150, 70)
+    assert f.unclear == []
+
+
+def test_gas_plus_piano():
+    f = parse_fees("gas $50 plus piano $150 & 10% discount")
+    assert (f.gas_fee, f.heavy_item_fee, f.discount_percent) == (50, 150, 10)
+
+
+def test_one_amount_for_two_kinds_is_reported_not_guessed():
+    f = parse_fees("- gas and piano $200")
     assert not f.any()
-    assert f.unclear == ["gas $50 and piano $150"]
+    assert f.unclear == ["gas and piano $200"]
 
 
 def test_percent_discount():
@@ -107,7 +119,7 @@ def test_summary_shows_fees_when_the_app_is_connected(intake, monkeypatch):
 def test_summary_flags_a_fee_it_could_not_read(intake, monkeypatch):
     monkeypatch.setenv("JOBS_APP_WEBHOOK_URL", "https://script.google.com/macros/s/x/exec")
     monkeypatch.setenv("JOBS_APP_WEBHOOK_SECRET", "s3cret")
-    intake["job_notes"] = "- gas $50 and piano $150"
+    intake["job_notes"] = "- gas and piano $200"
     text = confirm._summary(intake, {}, None)
     assert "Fee not read" in text
 
