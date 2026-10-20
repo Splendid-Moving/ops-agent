@@ -1,13 +1,14 @@
 """
-NODES: the five side effects, plus reconcile and report.
+NODES: the six side effects, plus reconcile and report.
 
     act_upsert_contact     -> GHL contact        (gate: everything after needs its id)
     act_calendar_event     -> Google Calendar event
+    act_app_job            -> job in the crew's AppSheet app (skipped if not connected)
     act_deposit_invoice    -> GHL invoice, texted to the customer
     act_confirmation_email -> GHL email
     act_customer_sms       -> GHL text, ONLY if the two above both went out
 
-These live in one module because they share the idempotency guard below. Five
+These live in one module because they share the idempotency guard below. Six
 copies of the same latch is five chances to forget it, and forgetting it means
 charging a customer twice.
 
@@ -17,7 +18,7 @@ Check the ledger first. If this action already succeeded, do nothing and return.
 That is what makes a retry safe: re-running the whole execute stage after a
 partial failure re-fires only the parts that failed.
 
-All five run strictly AFTER the confirm interrupt, so they are reached exactly
+All six run strictly AFTER the confirm interrupt, so they are reached exactly
 once per approval. Nothing here may ever move above an interrupt().
 """
 
@@ -31,6 +32,7 @@ from langchain_core.messages import AIMessage
 
 from agent import progress
 from agent.state import (
+    ACTION_APP_JOB,
     ACTION_CALENDAR,
     ACTION_CONTACT,
     ACTION_EMAIL,
@@ -43,7 +45,7 @@ from agent.state import (
 )
 from schemas import checklist as cl
 from schemas import email_template
-from services import calendar, config, formatting, ghl, maps, rates
+from services import calendar, config, formatting, ghl, jobs_app, maps, rates
 from services.ghl import CustomField
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,7 @@ def action(name: str) -> Callable:
 _DONE_TEXT = {
     ACTION_CONTACT: "Contact saved in GoHighLevel",
     ACTION_CALENDAR: "Job added to the calendar",
+    ACTION_APP_JOB: "Job added to the crew app",
     ACTION_INVOICE: "Deposit payment link texted",
     ACTION_EMAIL: "Confirmation email sent",
     ACTION_SMS: "Customer texted that both went out",
@@ -152,6 +155,7 @@ _DONE_TEXT = {
 _LABELS_SHORT = {
     ACTION_CONTACT: "Contact",
     ACTION_CALENDAR: "Calendar event",
+    ACTION_APP_JOB: "Crew app job",
     ACTION_INVOICE: "Deposit link",
     ACTION_EMAIL: "Confirmation email",
     ACTION_SMS: "Customer text",
@@ -247,6 +251,97 @@ def act_calendar_event(state: OpsAgentState) -> dict:
         color_id=formatting.get_color_id(intake.get("source", "")),
         fingerprint=job_fingerprint(intake),
     )
+
+
+# ── 2b. Job in the crew app ────────────────────────────────────────────────────
+
+def _address_or_blank(value: str) -> str:
+    """
+    The crew app treats every address as a real place: it geocodes it for drive
+    times and turns it into a map link. "TBD" is not a place, so it goes in as
+    blank and the job notes say what is still unknown.
+    """
+    value = (value or "").strip()
+    return "" if not value or cl.is_tbd(value) else value
+
+
+def app_job_payload(intake: dict, contact_id: str = "") -> dict:
+    """
+    The job as the crew app stores it. Pure — no I/O — so it is tested directly.
+
+    Shapes that matter on the other side:
+      - move_date is ISO (YYYY-MM-DD); the database column is a DATE.
+      - scheduled_time is the START of the arrival window as HH:MM, in LA time.
+        The app has a single start time, so the full window goes into the notes.
+      - move_type is one of the app's three options: Labor, Local, Long Distance.
+        The agent only books local moves and labor-only jobs.
+      - rates are the plain numbers for the crew size, not the GHL string.
+    """
+    move_date = formatting.parse_date(intake.get("move_date", ""))
+    if move_date is None:
+        raise ValueError(f"Unparseable move date {intake.get('move_date')!r}")
+
+    window = formatting.parse_arrival_time(intake.get("arrival_time", ""), move_date)
+    if window is None:
+        raise ValueError(f"Unparseable arrival window {intake.get('arrival_time')!r}")
+    start = datetime.fromisoformat(window[0])
+
+    is_labor = bool(intake.get("is_labor"))
+    pickup = _address_or_blank(intake.get("pickup_address", ""))
+    dropoff = "" if is_labor else _address_or_blank(intake.get("dropoff_address", ""))
+    extra_stop = _address_or_blank(intake.get("extra_stop", ""))
+
+    rate = rates.rate_for(intake.get("movers", ""))
+
+    notes = [f"Arrival window: {intake.get('arrival_time', '').strip()}"]
+    if is_labor:
+        notes.append("LABOR ONLY — no transport.")
+    if not pickup:
+        notes.append("Pickup address TBD.")
+    if not is_labor and not dropoff:
+        notes.append("Drop-off address TBD.")
+    if intake.get("job_notes"):
+        notes.append(str(intake["job_notes"]).strip())
+
+    return {
+        "fingerprint": job_fingerprint(intake),
+        "ghl_contact_id": contact_id,
+        "full_name": (intake.get("full_name") or "").strip(),
+        "phone": ghl.normalize_phone(intake.get("phone", "")),
+        "email": ghl.normalize_email(intake.get("email", "")),
+        "move_date": move_date.strftime("%Y-%m-%d"),
+        "scheduled_time": start.strftime("%H:%M"),
+        "move_type": "Labor" if is_labor else "Local",
+        "move_size": (intake.get("move_size") or "").strip(),
+        "origin_address": pickup,
+        "destination_address": dropoff,
+        "extra_stop": extra_stop,
+        "movers_required": rate.movers if rate else None,
+        "cash_rate_per_hour": rate.cash if rate else None,
+        "card_rate_per_hour": rate.card if rate else None,
+        "lead_source": (intake.get("source") or "").strip(),
+        "job_notes": "\n".join(notes),
+    }
+
+
+@action(ACTION_APP_JOB)
+def act_app_job(state: OpsAgentState) -> dict:
+    """
+    Put the job into the crew's app, so the office does not re-type it.
+
+    Skipped rather than failed when the link is not configured: a deployment
+    that has not been connected yet books exactly as it did before.
+
+    Safe to retry. The webhook keys the job on the same fingerprint the calendar
+    uses (phone + date), so a request whose response was lost comes back with
+    the job it already created rather than making a second one.
+    """
+    if not config.jobs_app_enabled():
+        raise ActionSkipped("not connected (JOBS_APP_WEBHOOK_URL / JOBS_APP_WEBHOOK_SECRET not set)")
+
+    progress.working("Adding the job to the crew app…")
+    intake = state.get("intake") or {}
+    return jobs_app.create_job(app_job_payload(intake, _contact_id(state)))
 
 
 # ── 3. Deposit invoice, texted ─────────────────────────────────────────────────
@@ -358,6 +453,7 @@ def act_customer_sms(state: OpsAgentState) -> dict:
 _LABELS = {
     ACTION_CONTACT: "GHL contact",
     ACTION_CALENDAR: "Calendar event",
+    ACTION_APP_JOB: "Job in the crew app (AppSheet)",
     ACTION_INVOICE: "Deposit invoice (texted)",
     ACTION_EMAIL: "Confirmation email",
     ACTION_SMS: "Text to the customer",
@@ -365,17 +461,17 @@ _LABELS = {
 
 
 #: Run in parallel once the contact exists. Independent of each other, so one
-#: failing does not stop the other two.
+#: failing does not stop the others.
 #:
-#: act_sms is NOT among them. It reports on two of these three, so it has to
-#: wait for them — it runs after all three converge, and decides for itself
-#: whether there is anything true to say.
-FAN_OUT = ["act_calendar", "act_invoice", "act_email"]
+#: act_sms is NOT among them. It reports on two of these, so it has to wait for
+#: them — it runs after all of them converge, and decides for itself whether
+#: there is anything true to say.
+FAN_OUT = ["act_calendar", "act_app_job", "act_invoice", "act_email"]
 
 
 def contact_gate(state: OpsAgentState) -> list[str] | str:
     """
-    Fan out to the three remaining actions, or skip to the report.
+    Fan out to the remaining actions, or skip to the report.
 
     Returning a LIST is how LangGraph fans out to several nodes at once. The
     other three all need a contact id, so without one there is nothing to
@@ -415,6 +511,7 @@ def report(state: OpsAgentState) -> dict:
             result = entry.get("result", {})
             detail = (
                 result.get("event_id")
+                or result.get("job_id")
                 or result.get("contact_id")
                 or result.get("invoice_id")
                 or ""

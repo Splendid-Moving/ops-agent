@@ -33,6 +33,33 @@ def ghl_user_id() -> str:
     return os.getenv("GHL_USER_ID", "")
 
 
+# ── Splendid ops app (AppSheet over Postgres) ──────────────────────────────────
+# The crew app reads jobs from a Postgres database. The agent does not talk to
+# that database directly: Railway's outbound IPs change, so it could not be
+# allow-listed on Cloud SQL, and it would be one more place holding the DB
+# password. Instead it posts to the Apps Script webhook that already writes to
+# that database for the AppSheet bots, which checks a shared secret.
+
+
+def jobs_app_webhook_url() -> str:
+    """The Apps Script web app's /exec URL — the same one the AppSheet bots call."""
+    return os.getenv("JOBS_APP_WEBHOOK_URL", "").strip()
+
+
+def jobs_app_webhook_secret() -> str:
+    """Must equal WEBHOOK_SECRET in the Apps Script project's Script Properties."""
+    return os.getenv("JOBS_APP_WEBHOOK_SECRET", "").strip()
+
+
+def jobs_app_enabled() -> bool:
+    """
+    Both settings present. When either is missing the step is skipped, not
+    failed: a deployment that has not been connected yet keeps booking exactly
+    as it did before, and the report says why the job was not sent.
+    """
+    return bool(jobs_app_webhook_url() and jobs_app_webhook_secret())
+
+
 # ── Vercel (website analytics) ─────────────────────────────────────────────────
 
 def vercel_token() -> str:

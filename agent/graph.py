@@ -80,9 +80,10 @@ def build_graph(checkpointer=None):
     builder.add_node("confirm", confirm_node.confirm)
     builder.add_node("give_up", give_up)
 
-    # Execution: contact first (the other three need its id), then fan out.
+    # Execution: contact first (the rest need its id), then fan out.
     builder.add_node("execute", actions.act_upsert_contact)
     builder.add_node("act_calendar", actions.act_calendar_event)
+    builder.add_node("act_app_job", actions.act_app_job)
     builder.add_node("act_invoice", actions.act_deposit_invoice)
     builder.add_node("act_email", actions.act_confirmation_email)
     builder.add_node("act_sms", actions.act_customer_sms)
@@ -116,18 +117,18 @@ def build_graph(checkpointer=None):
     # confirm returns a Command and routes itself to execute / ask_missing / END.
 
     # The contact must exist before anything can be attached to it. If it fails,
-    # skip the other three rather than firing three guaranteed failures.
+    # skip the rest rather than firing guaranteed failures.
     builder.add_conditional_edges(
         "execute",
         actions.contact_gate,
         [*actions.FAN_OUT, "report"],
     )
 
-    # These three are independent and run in parallel. The ledger's merge
-    # reducer is what keeps their three writes from overwriting each other.
+    # These four are independent and run in parallel. The ledger's merge
+    # reducer is what keeps their writes from overwriting each other.
     #
     # They converge on act_sms, which texts the customer to say the confirmation
-    # email and the deposit link both went out. It sits here, behind all three,
+    # email and the deposit link both went out. It sits here, behind all four,
     # for the obvious reason: it can only say that once it is true. A node with
     # several inbound edges waits for all of them, so this is the join — and it
     # skips itself, rather than failing, when there is nothing true to say.

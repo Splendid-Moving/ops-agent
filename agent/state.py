@@ -13,18 +13,25 @@ from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 
 # ── Action names ───────────────────────────────────────────────────────────────
-# The five side effects, in dependency order. upsert_contact runs first and
+# The six side effects, in dependency order. upsert_contact runs first and
 # alone because everything after it needs the contact id it returns, and
 # customer_sms runs last because it tells the customer that two of the others
 # happened — so it can only be sent once they have.
+#
+# app_job puts the job into the crew's AppSheet app (via its Postgres
+# database). It runs alongside the calendar, invoice and email, and is skipped
+# — not failed — on a deployment where the app link is not configured.
 
 ACTION_CONTACT = "upsert_contact"
 ACTION_CALENDAR = "calendar_event"
+ACTION_APP_JOB = "app_job"
 ACTION_INVOICE = "deposit_invoice"
 ACTION_EMAIL = "confirmation_email"
 ACTION_SMS = "customer_sms"
 
-ALL_ACTIONS = (ACTION_CONTACT, ACTION_CALENDAR, ACTION_INVOICE, ACTION_EMAIL, ACTION_SMS)
+ALL_ACTIONS = (
+    ACTION_CONTACT, ACTION_CALENDAR, ACTION_APP_JOB, ACTION_INVOICE, ACTION_EMAIL, ACTION_SMS,
+)
 
 ActionStatus = Literal["pending", "success", "failed", "skipped"]
 

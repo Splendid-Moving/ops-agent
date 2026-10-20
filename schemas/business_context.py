@@ -78,9 +78,11 @@ to the customer as a payment link. It comes off the final balance.
 
 ## Where things live
 
-There is no database. Three systems hold everything:
+Four systems hold everything:
 - **Google Calendar** — one event per job. The system of record for scheduling.
 - **GoHighLevel** — the CRM. Contacts, custom fields, invoices, SMS and email.
+- **The crew app** (AppSheet, on a Postgres database) — what crews run jobs from: \
+stages, timestamps, payments and pay. New bookings are added to it automatically.
 - **Google Sheets** — finances and monthly revenue reporting."""
 
 
