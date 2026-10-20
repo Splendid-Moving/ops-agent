@@ -241,9 +241,7 @@ a merge tag would reach the customer literally.
 
 **Customer names are normalized once, at intake.** Screenshot and chat replies
 such as `JANE O'NEILL` become `Jane O'Neill` before they reach GoHighLevel, the
-calendar, the confirmation email, or a text. The deposit-link SMS relies on
-GoHighLevel's default invoice sender once, so the company name is not repeated
-at the sign-off.
+calendar, the confirmation email, or a text.
 
 **Conversations expire daily.** A thread whose last activity was on an earlier
 Los Angeles date is discarded on the next message, before anything reads it.
@@ -264,10 +262,19 @@ checked before the graph runs at all.
 **GoHighLevel writes the deposit text, not this repo.** We hand it an invoice
 id; it composes the SMS from the account's *Invoice Received* template. No API
 field can change that wording — the template lives in Payments → Invoices &
-Estimates → Settings → Notifications. The one part we do control is the
-signature, via `sentFrom.fromName` in `services/ghl.py`, which is set to the
-company so customers are not signed off to by whichever staff account holds the
-API token.
+Estimates → Settings → Notifications. For SMS, `services/ghl.py` sets
+`sentFrom.fromName` to one literal space. Omitting it or using an empty string
+makes GHL insert the staff user's name; using the company name repeats the
+company that GHL already appends. Do not trim this space. Email sends retain
+their existing sender behavior.
+
+This workaround was verified on 2026-10-20 with two authorized SMS tests to the
+designated test contact: empty string produced `Best, Adilet Almedinov Splendid
+Moving`; one space produced `Best,   Splendid Moving`. GHL reported both texts
+delivered. The extra spaces come from GHL's default template. The test invoice
+was submitted to GHL's void endpoint and was no longer retrievable or listed
+afterward. This behavior depends on GHL's rendering, so local payload tests
+alone cannot prove what future SMS messages will look like.
 
 **State persists until something clears it.** The graph's state survives every
 turn — that is what lets a booking pause for an hour and resume. The cost is

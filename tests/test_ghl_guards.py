@@ -106,11 +106,11 @@ def test_every_picklist_id_is_a_real_field():
 
 # ── Invoice text is signed exactly once ────────────────────────────────────────
 
-def test_invoice_send_does_not_add_a_second_company_signature(monkeypatch):
+@pytest.mark.parametrize("action", ["sms", "email", "invalid"])
+def test_invoice_send_suppresses_staff_signature_only_for_sms(monkeypatch, action):
     """
-    The account's default invoice SMS already signs as Splendid Moving. Adding
-    a `sentFrom` object makes GHL append that same company name a second time.
-    The visible result is "Best, Splendid Moving Splendid Moving".
+    Live SMS testing showed that an omitted or empty sender falls back to the
+    staff name. A single space suppresses it; GHL still appends the company.
 
     The request is faked: no invoice or text is sent while testing this.
     """
@@ -133,6 +133,12 @@ def test_invoice_send_does_not_add_a_second_company_signature(monkeypatch):
     monkeypatch.setattr(config, "dry_run", lambda: False)
     monkeypatch.setattr(ghl.requests, "post", fake_post)
 
-    ghl.send_invoice("inv_123", action="sms")
+    ghl.send_invoice("inv_123", action=action)
 
-    assert "sentFrom" not in sent
+    if action == "email":
+        assert sent["action"] == "email"
+        assert "sentFrom" not in sent
+    else:
+        assert sent["action"] == "sms"
+        assert sent["sentFrom"] == {"fromName": " "}
+    assert sent["liveMode"] is True

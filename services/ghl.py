@@ -528,18 +528,23 @@ def send_invoice(invoice_id: str, action: str = "sms") -> dict[str, Any]:
         logger.info("[DRY RUN] send_invoice %s via %s", invoice_id, action)
         return {"sent": True, "action": action, "dry_run": True}
 
+    payload = {
+        "altId": config.ghl_location_id(),
+        "altType": "location",
+        "action": action,
+        "liveMode": True,
+        "userId": config.ghl_user_id(),
+    }
+    if action == "sms":
+        # Live-tested 2026-10-20: missing/empty uses the staff name, while a
+        # single space suppresses it. GHL appends the company separately.
+        # Do not strip this space or replace it with the company name.
+        payload["sentFrom"] = {"fromName": " "}
+
     resp = requests.post(
         _url(f"/invoices/{invoice_id}/send"),
         headers=_headers(),
-        json={
-            "altId": config.ghl_location_id(),
-            "altType": "location",
-            "action": action,
-            "liveMode": True,
-            "userId": config.ghl_user_id(),
-            # The location's default invoice notification already signs as the
-            # company. Supplying sentFrom adds that same name a second time.
-        },
+        json=payload,
         timeout=_TIMEOUT,
     )
     if not resp.ok:

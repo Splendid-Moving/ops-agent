@@ -119,30 +119,35 @@ and a customer name received as `JANE DOE`, `jane doe`, or `JANE O'NEILL`
 appears as `Jane Doe` or `Jane O'Neill` throughout the booking.
 
 CONSTRAINTS: Keep GoHighLevel's account-level default invoice notification in
-place; do not send a live invoice merely to test wording. Use Python's standard
+place. Automated tests must not send real messages. On 2026-10-20 the user
+explicitly authorized live wording tests to 8185054576; restrict those tests
+to that contact and void the test invoice afterward. Use Python's standard
 library for the casing rule, so this narrow formatting change adds no dependency.
 
-FORMAT: The invoice send request relies on the account's existing sender and
-template once, and name normalization happens while the intake record is formed
-from both screenshots and typed follow-up answers.
+FORMAT: SMS invoice sends set `sentFrom.fromName` to one literal space to
+suppress GHL's staff-name fallback, leaving the automatic company signature.
+Email invoice sends keep their existing sender behavior. Name normalization
+happens while the intake record is formed from screenshots and typed replies.
 
 FAILURE (any of these = not done):
-- The send payload adds a second sender name to GoHighLevel's default invoice
-  notification.
+- The deposit SMS signs off with a staff name or repeats the company name.
 - An uppercase or lowercase extracted or corrected full name reaches the GHL
   first/last-name fields, calendar, email, or customer SMS unnormalized.
 - A single-name customer, apostrophe, hyphen, or middle/compound surname is
   lost or split incorrectly.
-- A test sends a real invoice, contact, or SMS.
+- An automated test sends a real invoice, contact, or SMS, or a manual live
+  test sends to anyone outside the explicitly authorized test contact.
 
 ## Status
-_Updated: 2026-10-09_
-- Maintenance change complete: the deposit invoice send payload no longer adds
-  a second `sentFrom` signature to GoHighLevel's default invoice SMS. Customer
-  names are normalized at both intake boundaries (screenshot extraction and
-  typed replies), with a final safeguard when the GHL first/last-name fields
-  are made. Verified offline with 617 passing tests; no real invoice, contact,
-  or SMS was sent to test it.
+_Updated: 2026-10-20_
+- Invoice signature correction: the previous omission of `sentFrom` did not
+  suppress GHL's staff-name fallback. Two authorized live SMS tests confirmed
+  that empty string still yields Adilet's name, whereas one literal space
+  yields `Best,   Splendid Moving`. Both were reported delivered by GHL.
+  Test invoice INV-007897 was submitted successfully to the void endpoint;
+  subsequent lookup returned 404 and the contact's invoice list was empty.
+  The SMS-only fix is applied locally; deployment has not been verified.
+  Existing customer name normalization remains unchanged.
 - Built: **all five phases; the lane is live.** `services/vercel.py`,
   `agent/nodes/site_traffic.py`, the `site` router intent and the graph edge.
   37 tests (26 offline + 11 live routing). All four GOAL questions answered
