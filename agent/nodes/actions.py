@@ -45,7 +45,7 @@ from agent.state import (
 )
 from schemas import checklist as cl
 from schemas import email_template
-from services import calendar, config, fees, formatting, ghl, jobs_app, maps, rates
+from services import calendar, config, errors, fees, formatting, ghl, jobs_app, maps, rates
 from services.ghl import CustomField
 
 logger = logging.getLogger(__name__)
@@ -112,14 +112,16 @@ def action(name: str) -> Callable:
                 }
             except Exception as exc:
                 logger.exception("%s failed", name)
-                progress.error(f"{_LABELS_SHORT.get(name, name)} failed",
-                               f"{type(exc).__name__}: {exc}")
+                # Staff read this in the report, so plain English; the raw
+                # error is in the log line above.
+                why = str(errors.explain(exc))
+                progress.error(f"{_LABELS_SHORT.get(name, name)} failed", why)
                 return {
                     "ledger": {
                         name: {
                             "status": "failed",
                             "result": {},
-                            "error": f"{type(exc).__name__}: {exc}",
+                            "error": why,
                             "attempts": attempts,
                         }
                     }
@@ -507,6 +509,10 @@ def report(state: OpsAgentState) -> dict:
         lines.append(f"Done. {name} is booked.")
     else:
         lines.append(f"Partly done — {len(failed)} of {len(ALL_ACTIONS)} steps failed.")
+        if ACTION_CONTACT in failed:
+            # Every other step hangs off the contact, so none of them ran.
+            lines.append("Nothing else was done: no calendar event, no deposit link, "
+                         "no email, and the customer wasn't contacted.")
 
     for act in ALL_ACTIONS:
         entry = ledger.get(act, {})

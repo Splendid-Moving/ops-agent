@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 from agent.models import get_model
 from agent.state import OpsAgentState
 from schemas import checklist as cl
-from services import formatting
+from services import errors, formatting
 from services.calendar import LA_TZ
 from services.ghl import PICKLIST_VALUES, CustomField
 
@@ -225,10 +225,15 @@ One reply often answers several questions at once — e.g. "next Friday 8-9am, \
 3 guys, no notes" answers four."""
 
 
+class ParseFailed(Exception):
+    """The parser model call failed; the message is a plain-English reason for staff."""
+
+
 def _parse(reply: str, questions: list[str], *, editing: bool,
            current: dict | None = None) -> ParsedReply | None:
     """
-    Model call. Returns None when it fails, so the caller can re-ask.
+    Model call. Raises ParseFailed when it fails, so the caller can re-ask and
+    say why instead of silently asking the same question again.
 
     `current` is what makes edits work. Without it the model can extract a
     value the dispatcher states ("8-9am") but has nothing to apply "remove the
@@ -240,9 +245,13 @@ def _parse(reply: str, questions: list[str], *, editing: bool,
             [SystemMessage(content=_parse_prompt(questions, editing, current or {})),
              ("human", reply)]
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Could not parse reply %r", reply[:200])
-        return None
+        why = errors.explain(exc)
+        raise ParseFailed(
+            f"⚠️ I couldn't process your last message. {why.problem} "
+            f"Nothing from it was saved. {why.fix}"
+        ) from exc
 
 
 def _apply(intake: dict, parsed: ParsedReply) -> dict:
@@ -338,8 +347,11 @@ def ask_missing(state: OpsAgentState) -> dict:
     # user typed this a second ago and must not be asked to repeat it.
     if edit := intake.pop("_pending_edit", None):
         logger.info("Applying edit from the confirm gate: %r", str(edit)[:120])
-        if parsed := _parse(str(edit), [], editing=True, current=intake):
-            _apply(intake, parsed)
+        try:
+            if parsed := _parse(str(edit), [], editing=True, current=intake):
+                _apply(intake, parsed)
+        except ParseFailed as why:
+            intake["_aside"] = str(why).replace("your last message", "that change")
         return {"intake": intake}
 
     # ── Entrance 1: the checklist is short of something ───────────────────────
@@ -370,7 +382,11 @@ def ask_missing(state: OpsAgentState) -> dict:
         _record_round(intake, {}, "answer")
         return {"intake": intake}
 
-    parsed = _parse(reply, questions, editing=False, current=intake)
+    try:
+        parsed = _parse(reply, questions, editing=False, current=intake)
+    except ParseFailed as why:
+        parsed = None
+        intake["_aside"] = str(why)
     if parsed is None:
         _record_round(intake, {}, "answer")
         return {"intake": intake}

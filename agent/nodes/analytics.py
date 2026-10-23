@@ -27,7 +27,7 @@ from agent import progress
 from agent.models import get_model
 from agent.state import OpsAgentState
 from schemas import business_context
-from services import calendar, formatting
+from services import calendar, errors, formatting
 
 logger = logging.getLogger(__name__)
 
@@ -385,9 +385,7 @@ def analytics(state: OpsAgentState) -> dict:
             "messages": [
                 AIMessage(
                     content=(
-                        f"I couldn't read the calendar just now — {type(exc).__name__}. "
-                        "Worth retrying; if it keeps happening the calendar credentials "
-                        "may need a look."
+                        f"I couldn't read the calendar just now. {errors.explain(exc)}"
                     )
                 )
             ]

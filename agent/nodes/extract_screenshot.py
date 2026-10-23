@@ -24,7 +24,7 @@ from agent.state import OpsAgentState, booking_has_run, new_ledger
 from schemas import business_context
 from schemas import checklist as cl
 from schemas.intake import MIN_CONFIDENCE, ScreenshotExtraction
-from services import formatting, ocr
+from services import errors, formatting, ocr
 from services.ghl import PICKLIST_VALUES, CustomField
 from services.calendar import LA_TZ
 
@@ -557,9 +557,13 @@ def extract_screenshot(state: OpsAgentState) -> dict:
                     f"  {accompanying}"
                 )),
             ])
-        except Exception:
+        except Exception as exc:
             logger.exception("Text extraction failed")
-            return {"intake": carried, "field_confidence": {}, **reset}
+            why = errors.explain(exc)
+            return {"intake": {**carried, "_aside": (
+                f"⚠️ I couldn't read the details in your message. {why.problem} "
+                f"So I've got nothing from it yet. {why.fix} Or type the details below."
+            )}, "field_confidence": {}, **reset}
 
         intake, confidence = _to_intake(extraction)
         _recover_date(intake, confidence, accompanying)
@@ -605,10 +609,16 @@ def extract_screenshot(state: OpsAgentState) -> dict:
 
     try:
         extraction = model.invoke([SystemMessage(content=_system_prompt()), HumanMessage(content=content)])
-    except Exception:
+    except Exception as exc:
         logger.exception("Screenshot extraction failed")
-        # Not fatal: fall through with nothing and let the checklist ask.
-        return {"intake": dict(state.get("intake") or {}), "field_confidence": {}}
+        # Not fatal: fall through with nothing and let the checklist ask — but
+        # say why, or it looks like the screenshot was blank.
+        why = errors.explain(exc)
+        return {"intake": {**carried, "_aside": (
+            f"⚠️ I couldn't read the screenshot. {why.problem} "
+            f"So none of its details were filled in below. {why.fix} "
+            "Or type the details here instead."
+        )}, "field_confidence": {}, **reset}
 
     intake, confidence = _to_intake(extraction)
     _recover_date(intake, confidence, accompanying)

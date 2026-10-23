@@ -67,7 +67,7 @@ from googleapiclient.http import MediaIoBaseDownload
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 
-from services import config, tracing
+from services import config, errors, tracing
 
 logger = logging.getLogger(__name__)
 
@@ -915,6 +915,13 @@ def _expiry_notice(expired: dict | None) -> str:
     )
 
 
+def crash_text(exc: Exception) -> str:
+    """What staff see when a turn fails outright: what went wrong, what didn't happen, what to do."""
+    why = errors.explain(exc)
+    return (f"⚠️ That didn't go through. {why.problem}\n\n"
+            f"Nothing was booked, created or sent. {why.fix}")
+
+
 def run_graph(event: dict, decision: str | None = None,
               buttons: bool = True) -> tuple[str, dict | None]:
     """
@@ -978,10 +985,7 @@ def run_graph(event: dict, decision: str | None = None,
 
     except Exception as exc:
         logger.exception("Graph run failed for %s", thread_id)
-        return (
-            "Something broke and the booking did *not* go through.\n\n"
-            f"`{type(exc).__name__}: {exc}`"
-        ), None
+        return crash_text(exc), None
 
 
 def process_event(event: dict, decision: str | None = None) -> None:
@@ -1056,11 +1060,7 @@ def process_event(event: dict, decision: str | None = None) -> None:
 
     except Exception as exc:
         logger.exception("Graph run failed for %s", thread_id)
-        update_message(
-            placeholder,
-            f"Something broke and the booking did *not* go through.\n\n"
-            f"`{type(exc).__name__}: {exc}`",
-        )
+        update_message(placeholder, crash_text(exc))
 
 
 # ── Webhook ────────────────────────────────────────────────────────────────────

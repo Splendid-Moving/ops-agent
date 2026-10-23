@@ -141,7 +141,7 @@ def test_a_refusal_is_recorded_as_a_failure_with_the_reason(intake, contact_done
     monkeypatch.setattr(jobs_app, "create_job", refuse)
     entry = actions.act_app_job({"intake": intake, "ledger": contact_done})["ledger"][ACTION_APP_JOB]
     assert entry["status"] == "failed"
-    assert "Unauthorized" in entry["error"]
+    assert "rejected our login" in entry["error"]
 
 
 def test_report_shows_the_job_id(intake, monkeypatch):

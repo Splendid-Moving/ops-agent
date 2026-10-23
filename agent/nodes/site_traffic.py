@@ -20,7 +20,7 @@ from langgraph.config import get_stream_writer
 from agent import progress
 from agent.models import get_model
 from agent.state import OpsAgentState
-from services import vercel
+from services import errors, vercel
 from services.calendar import LA_TZ
 
 logger = logging.getLogger(__name__)
@@ -267,6 +267,5 @@ def site_traffic_agent(state: OpsAgentState) -> dict:
     except Exception as exc:
         logger.exception("Site traffic lane failed")
         return {"messages": [AIMessage(content=(
-            f"I couldn't read the site analytics just now — {type(exc).__name__}. "
-            "Worth retrying; if it keeps happening the Vercel token may need a look."
+            f"I couldn't read the site analytics just now. {errors.explain(exc)}"
         ))]}

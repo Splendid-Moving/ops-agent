@@ -211,12 +211,14 @@ def confirm(state: OpsAgentState) -> Command[Literal["execute", "ask_missing", "
     answer = interrupt(
         {
             "type": "confirm",
-            "message": _summary(intake, result.warnings, duplicate, existing),
+            "message": (f"{intake['_aside']}\n\n" if intake.get("_aside") else "")
+                       + _summary(intake, result.warnings, duplicate, existing),
             "intake": intake,
             "duplicate": duplicate,
         }
     )
     # ── Below: runs once per resume. ──
+    intake.pop("_aside", None)  # shown once
 
     decision = str(answer or "").strip().lower()
 

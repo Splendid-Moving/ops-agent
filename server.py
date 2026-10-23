@@ -27,7 +27,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
 from agent.graph import build_graph
-from services import config, tracing
+from services import config, errors, tracing
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -125,7 +125,7 @@ async def chat(
         logger.exception("Graph invocation failed")
         return JSONResponse(
             {"thread_id": thread_id, "paused": False,
-             "reply": f"Something broke: {type(exc).__name__}: {exc}"},
+             "reply": str(errors.explain(exc))},
             status_code=200,
         )
 
@@ -222,7 +222,7 @@ async def chat_stream(
             logger.exception("Stream failed")
             yield event("done", {
                 "paused": False,
-                "reply": f"Something broke: {type(exc).__name__}: {exc}",
+                "reply": str(errors.explain(exc)),
             })
 
     return StreamingResponse(
