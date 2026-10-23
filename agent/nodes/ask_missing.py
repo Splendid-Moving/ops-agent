@@ -249,8 +249,8 @@ def _parse(reply: str, questions: list[str], *, editing: bool,
         logger.exception("Could not parse reply %r", reply[:200])
         why = errors.explain(exc)
         raise ParseFailed(
-            f"⚠️ I couldn't process your last message. {why.problem} "
-            f"Nothing from it was saved. {why.fix}"
+            f"⚠️ Couldn't process your last message, so nothing was saved: "
+            f"{why.problem} {why.fix}"
         ) from exc
 
 

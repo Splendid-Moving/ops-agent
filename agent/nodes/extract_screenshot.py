@@ -561,8 +561,7 @@ def extract_screenshot(state: OpsAgentState) -> dict:
             logger.exception("Text extraction failed")
             why = errors.explain(exc)
             return {"intake": {**carried, "_aside": (
-                f"⚠️ I couldn't read the details in your message. {why.problem} "
-                f"So I've got nothing from it yet. {why.fix} Or type the details below."
+                f"⚠️ Couldn't read your message: {why.problem} {why.fix}"
             )}, "field_confidence": {}, **reset}
 
         intake, confidence = _to_intake(extraction)
@@ -615,9 +614,8 @@ def extract_screenshot(state: OpsAgentState) -> dict:
         # say why, or it looks like the screenshot was blank.
         why = errors.explain(exc)
         return {"intake": {**carried, "_aside": (
-            f"⚠️ I couldn't read the screenshot. {why.problem} "
-            f"So none of its details were filled in below. {why.fix} "
-            "Or type the details here instead."
+            f"⚠️ Couldn't read the screenshot: {why.problem} "
+            f"{why.fix} Or type the details here."
         )}, "field_confidence": {}, **reset}
 
     intake, confidence = _to_intake(extraction)

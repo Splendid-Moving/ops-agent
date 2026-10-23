@@ -1,8 +1,7 @@
 """
 Turns a technical error into a short plain-English explanation for staff.
 
-Every message answers two questions: what went wrong, and whether waiting or
-trying again will fix it. Callers add the third — what did NOT happen because
+Every message answers two questions, briefly: what went wrong, and what fixes it. Callers add the third — what did NOT happen because
 of it — since only they know. The raw error still goes to the logs.
 """
 
@@ -13,8 +12,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Explanation:
-    problem: str   # "OpenAI (the AI that reads screenshots) is out of credits."
-    fix: str       # "Waiting won't help — someone needs to add credits…"
+    problem: str   # "OpenAI is out of credits."
+    fix: str       # "Someone needs to top up the account."
 
     def __str__(self) -> str:
         return f"{self.problem} {self.fix}"
@@ -24,7 +23,7 @@ def _service(exc: BaseException, text: str) -> str:
     """Best guess at which outside service failed, from where the error came from."""
     origin = f"{type(exc).__module__} {text}".lower()
     if "openai" in origin or "openrouter" in origin:
-        return "The AI service (OpenAI)"
+        return "OpenAI"
     if "ghl" in origin or "leadconnector" in origin or "gohighlevel" in origin:
         return "GoHighLevel"
     if "jobsapp" in type(exc).__name__.lower() or "ops app" in origin:
@@ -51,34 +50,34 @@ def explain(exc: BaseException) -> Explanation:
     if "insufficient_quota" in low or "no credits" in low or "credit_balance_exhausted" in low:
         return Explanation(
             f"{service or 'The AI service'} is out of credits.",
-            "Waiting won't help — someone needs to add credits to the account, then try again.",
+            "Someone needs to top up the account.",
         )
 
     if status in (401, 403) or "unauthorized" in low or "invalid_api_key" in low \
             or "invalid_grant" in low:
         return Explanation(
             f"{who} rejected our login.",
-            "Waiting won't help — the API key or credentials need updating.",
+            "The API key needs updating.",
         )
 
     if status == 429 or "ratelimit" in name.lower() or "rate limit" in low:
         return Explanation(
-            f"{who} is getting too many requests right now.",
-            "Wait a minute and try again.",
+            f"{who} is busy.",
+            "Try again in a minute.",
         )
 
     if isinstance(exc, (TimeoutError, ConnectionError, ssl.SSLError)) \
             or "timeout" in name.lower() or "connection" in name.lower() \
             or "timed out" in low or (isinstance(status, int) and status >= 500):
         return Explanation(
-            f"Couldn't get through to {service or 'an outside service'} — a network hiccup or a brief outage on their side.",
-            "Usually fixed by trying again in a minute.",
+            f"Couldn't reach {service or 'an outside service'}.",
+            "Try again in a minute.",
         )
 
     # Unknown: keep a short slice of the real message. Services like GHL put the
     # useful part there ("Issue date cannot be after due date").
     detail = text.strip().splitlines()[0][:200] if text.strip() else name
     return Explanation(
-        f"Something unexpected went wrong ({detail}).",
-        "Try once more; if it happens again, it needs someone to look at it.",
+        f"Something went wrong ({detail}).",
+        "Try again; if it repeats, someone needs to look at it.",
     )

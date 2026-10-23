@@ -30,10 +30,9 @@ screenshot sent while it is waiting on a question can't be added to that
 booking, and it will tell you so. If Google Chat fails to hand over an image
 (it retries 3 times first), the reply says which one was lost.
 
-**When something fails, it says so in plain English** — what went wrong, what
-did *not* happen because of it, and whether waiting or trying again will help
-(e.g. *"OpenAI is out of credits… Waiting won't help — someone needs to add
-credits"*). The translation lives in `services/errors.py`; the raw error still
+**When something fails, it says so briefly** — what went wrong and what fixes
+it (e.g. *"Couldn't read the screenshot: OpenAI is out of credits. Someone
+needs to top up the account. Or type the details here."*). The translation lives in `services/errors.py`; the raw error still
 goes to the Railway logs.
 
 **Commands:** `/clear` forgets the conversation and starts fresh, `/help` lists

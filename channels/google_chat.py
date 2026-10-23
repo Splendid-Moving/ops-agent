@@ -918,8 +918,7 @@ def _expiry_notice(expired: dict | None) -> str:
 def crash_text(exc: Exception) -> str:
     """What staff see when a turn fails outright: what went wrong, what didn't happen, what to do."""
     why = errors.explain(exc)
-    return (f"⚠️ That didn't go through. {why.problem}\n\n"
-            f"Nothing was booked, created or sent. {why.fix}")
+    return f"⚠️ Didn't go through — nothing was booked or sent. {why.problem} {why.fix}"
 
 
 def run_graph(event: dict, decision: str | None = None,

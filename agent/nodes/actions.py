@@ -511,8 +511,8 @@ def report(state: OpsAgentState) -> dict:
         lines.append(f"Partly done — {len(failed)} of {len(ALL_ACTIONS)} steps failed.")
         if ACTION_CONTACT in failed:
             # Every other step hangs off the contact, so none of them ran.
-            lines.append("Nothing else was done: no calendar event, no deposit link, "
-                         "no email, and the customer wasn't contacted.")
+            lines.append("So nothing else was done — no calendar event, deposit link, "
+                         "email or text.")
 
     for act in ALL_ACTIONS:
         entry = ledger.get(act, {})

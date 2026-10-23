@@ -32,22 +32,22 @@ OUT_OF_CREDITS = _error(
 
 # ── the translator ────────────────────────────────────────────────────────────
 
-def test_out_of_credits_says_waiting_wont_help():
+def test_out_of_credits_says_to_top_up():
     why = errors.explain(OUT_OF_CREDITS)
-    assert "OpenAI" in why.problem and "out of credits" in why.problem
-    assert "Waiting won't help" in why.fix
+    assert why.problem == "OpenAI is out of credits."
+    assert "top up" in why.fix
 
 
 def test_a_plain_rate_limit_says_wait_and_retry():
     why = errors.explain(_error("openai", "Rate limit reached", status=429))
-    assert "too many requests" in why.problem
-    assert "Wait a minute" in why.fix
+    assert "busy" in why.problem
+    assert "Try again" in why.fix
 
 
 def test_a_dropped_connection_says_try_again():
     why = errors.explain(ssl.SSLEOFError("EOF occurred in violation of protocol"))
-    assert "network hiccup" in why.problem
-    assert "trying again" in why.fix
+    assert "Couldn't reach" in why.problem
+    assert "Try again" in why.fix
 
 
 def test_a_bad_login_names_the_service():
@@ -85,7 +85,7 @@ def test_a_failed_screenshot_read_explains_itself(monkeypatch):
     _failing_model(monkeypatch, OUT_OF_CREDITS)
     out = node.extract_screenshot(_screenshot_state())
     aside = out["intake"]["_aside"]
-    assert "couldn't read the screenshot" in aside
+    assert "Couldn't read the screenshot" in aside
     assert "out of credits" in aside
 
 
@@ -100,5 +100,5 @@ def test_a_failed_read_does_not_bring_back_the_previous_customer(monkeypatch):
 
 def test_a_crash_says_what_did_not_happen():
     text = google_chat.crash_text(OUT_OF_CREDITS)
-    assert "Nothing was booked, created or sent" in text
+    assert "nothing was booked or sent" in text
     assert "Error code" not in text
