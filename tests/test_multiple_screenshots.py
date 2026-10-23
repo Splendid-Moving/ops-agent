@@ -15,6 +15,8 @@ sends it to the checklist to ask a human.
 
 import base64
 
+import pytest
+
 from langchain_core.messages import HumanMessage
 
 from agent.nodes.extract_screenshot import _image_parts, _text_of
@@ -111,3 +113,77 @@ def test_ocr_runs_over_each_image(monkeypatch):
     ]
     node._ocr_text(images)
     assert len(seen) == 2
+
+
+# ── A screenshot is never dropped silently ─────────────────────────────────────
+
+def test_a_failed_download_is_retried(monkeypatch):
+    """Google's connection drops now and then (SSLEOFError, seen live); retry it."""
+    calls = {"n": 0}
+
+    class FlakyDownloader:
+        def __init__(self, buffer, request):
+            self.buffer = buffer
+
+        def next_chunk(self):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ConnectionError("EOF occurred in violation of protocol")
+            self.buffer.write(b"png-bytes")
+            return None, True
+
+    class FakeService:
+        def media(self):
+            return self
+
+        def download_media(self, resourceName):
+            return object()
+
+    monkeypatch.setattr(google_chat, "chat_service", lambda: FakeService())
+    monkeypatch.setattr(google_chat, "MediaIoBaseDownload", FlakyDownloader)
+    monkeypatch.setattr(google_chat, "_sleep", lambda _: None)
+
+    assert google_chat.download_attachment(_attachment("a.png")) == (b"png-bytes", "image/png")
+    assert calls["n"] == 2
+
+
+def test_the_user_is_told_when_a_screenshot_could_not_be_opened(monkeypatch):
+    """The live failure: contact screenshot lost, agent asked for name/email/phone with no explanation."""
+    calls = {"n": 0}
+
+    def flaky(_):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else (b"png-bytes", "image/png")
+
+    monkeypatch.setattr(google_chat, "download_attachment", flaky)
+    graph_input, notice = google_chat.prepare_input(_event("bad.png", "good.png"), is_paused=False)
+
+    assert len(_image_parts(graph_input["messages"][0])) == 1
+    assert "1 of your 2 screenshots" in notice
+
+
+def test_no_notice_when_every_screenshot_arrives(monkeypatch):
+    _fake_download(monkeypatch)
+    _, notice = google_chat.prepare_input(_event("a.png", "b.png"), is_paused=False)
+    assert notice == ""
+
+
+def test_a_screenshot_sent_mid_booking_gets_an_explanation_not_silence(monkeypatch):
+    """
+    The second live failure: re-sending the lost screenshot while the agent was
+    waiting on a question did nothing, three times over.
+    """
+    monkeypatch.setattr(google_chat, "download_attachment",
+                        lambda _: pytest.fail("a paused booking cannot take an image"))
+    graph_input, notice = google_chat.prepare_input(_event("a.png"), is_paused=True)
+
+    assert graph_input is None
+    assert "already in progress" in notice
+
+
+def test_text_sent_with_a_mid_booking_screenshot_is_still_used(monkeypatch):
+    graph_input, notice = google_chat.prepare_input(
+        _event("a.png", text="3 movers"), is_paused=True
+    )
+    assert graph_input.resume == "3 movers"
+    assert "already in progress" in notice

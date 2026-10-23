@@ -25,6 +25,11 @@ exactly what it is about to do, and only then:
 
 Nothing happens until you reply `yes`.
 
+Send all the screenshots for one job **together, in one message** — a
+screenshot sent while it is waiting on a question can't be added to that
+booking, and it will tell you so. If Google Chat fails to hand over an image
+(it retries 3 times first), the reply says which one was lost.
+
 **Commands:** `/clear` forgets the conversation and starts fresh, `/help` lists
 what it can do. Both also work typed as plain words (`reset`, `start over`).
 

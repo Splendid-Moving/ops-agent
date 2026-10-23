@@ -376,17 +376,31 @@ def download_attachment(attachment: dict) -> tuple[bytes, str] | None:
         return None
 
     mime = attachment.get("contentType", "image/png")
-    try:
-        request = chat_service().media().download_media(resourceName=ref)
-        buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(buffer, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        return buffer.getvalue(), mime
-    except Exception:
-        logger.exception("Failed to download attachment %s", ref)
-        return None
+    # Retried because the connection to Google occasionally drops mid-request
+    # (seen live as SSLEOFError); a second attempt a moment later succeeds.
+    for attempt in range(1, _DOWNLOAD_ATTEMPTS + 1):
+        try:
+            request = chat_service().media().download_media(resourceName=ref)
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            return buffer.getvalue(), mime
+        except Exception:
+            if attempt == _DOWNLOAD_ATTEMPTS:
+                logger.exception("Failed to download attachment %s", ref)
+                return None
+            logger.warning("Attachment download failed (attempt %d), retrying", attempt,
+                           exc_info=True)
+            _sleep(attempt)
+    return None
+
+
+_DOWNLOAD_ATTEMPTS = 3
+
+#: Overridable so tests don't actually wait between retries.
+_sleep: Callable[[float], None] = time.sleep
 
 
 # ── Workspace add-on translation ──────────────────────────────────────────────
@@ -535,7 +549,66 @@ def strip_mention(event: dict) -> str:
     return (message.get("text") or "").strip()
 
 
-def build_graph_input(event: dict, is_paused: bool) -> object:
+def _image_attachments(event: dict) -> list[dict]:
+    attachments = (event.get("message") or {}).get("attachment") or []
+    return [a for a in attachments if a.get("contentType", "").startswith("image/")]
+
+
+def download_images(event: dict) -> tuple[list[dict], int]:
+    """The event's images as model content blocks, plus how many failed to download."""
+    images, failed = [], 0
+    for attachment in _image_attachments(event):
+        if downloaded := download_attachment(attachment):
+            raw, mime = downloaded
+            b64 = base64.b64encode(raw).decode()
+            images.append(
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{mime};base64,{b64}"}}
+            )
+        else:
+            failed += 1
+    return images, failed
+
+
+PAUSED_SCREENSHOT_TEXT = (
+    "I can't add a screenshot to a booking that's already in progress, so I "
+    "didn't read that one. Type the missing details here instead, or send "
+    "`/clear` and then all the screenshots together in one message.\n\n"
+)
+
+
+def _download_failed_text(failed: int, total: int) -> str:
+    which = "your screenshot" if total == 1 else f"{failed} of your {total} screenshots"
+    return (
+        f"⚠️ I couldn't open {which} (Google Chat didn't hand it over), so "
+        "anything only in it is missing below. Send `/clear` and try the "
+        "screenshots again.\n\n"
+    )
+
+
+def prepare_input(event: dict, is_paused: bool) -> tuple[object | None, str]:
+    """
+    Graph input for a typed message, plus a notice to show above the reply.
+
+    Input is None when there is nothing to run and the notice is the whole
+    reply. Exists so a screenshot is never dropped without saying so — both
+    silent drops below were hit live, and the agent then asked for details the
+    user had already sent.
+    """
+    if is_paused:
+        if not _image_attachments(event):
+            return build_graph_input(event, True), ""
+        if not strip_mention(event):
+            return None, PAUSED_SCREENSHOT_TEXT.strip()
+        return build_graph_input(event, True), PAUSED_SCREENSHOT_TEXT
+
+    images, failed = download_images(event)
+    notice = _download_failed_text(failed, failed + len(images)) if failed else ""
+    return build_graph_input(event, False, images), notice
+
+
+def build_graph_input(event: dict, is_paused: bool,
+                      images: list[dict] | None = None) -> object:
     """
     Turn a Chat event into graph input.
 
@@ -548,22 +621,12 @@ def build_graph_input(event: dict, is_paused: bool) -> object:
 
     if is_paused:
         # Resume values are plain strings for both interrupt types
-        # (ask_missing and confirm). An image at this point would be a new job,
-        # not an answer to the pending question, so it is ignored.
+        # (ask_missing and confirm), so an image cannot be passed along here.
+        # `prepare_input` tells the user it was not read.
         return Command(resume=text)
 
-    attachments = (event.get("message") or {}).get("attachment") or []
-    images = []
-    for attachment in attachments:
-        if not attachment.get("contentType", "").startswith("image/"):
-            continue
-        if downloaded := download_attachment(attachment):
-            raw, mime = downloaded
-            b64 = base64.b64encode(raw).decode()
-            images.append(
-                {"type": "image_url",
-                 "image_url": {"url": f"data:{mime};base64,{b64}"}}
-            )
+    if images is None:
+        images, _ = download_images(event)
 
     if images:
         content = [{"type": "text", "text": text or "Book this job."}, *images]
@@ -892,7 +955,10 @@ def run_graph(event: dict, decision: str | None = None,
                 return "That booking is already resolved.", None
             graph_input: object = Command(resume=decision)
         else:
-            graph_input = build_graph_input(event, paused)
+            graph_input, screenshot_notice = prepare_input(event, paused)
+            notice += screenshot_notice
+            if graph_input is None:
+                return notice, None
 
         # A typed reply to a paused booking is a resume as much as a button is.
         if paused and decision is None:
@@ -938,6 +1004,7 @@ def process_event(event: dict, decision: str | None = None) -> None:
     )
 
     placeholder = post_message(space, "_Working on it…_", thread=reply_thread)
+    notice = ""
 
     try:
         paused = _is_paused(thread_id)
@@ -951,7 +1018,10 @@ def process_event(event: dict, decision: str | None = None) -> None:
                 return
             graph_input: object = Command(resume=decision)
         else:
-            graph_input = build_graph_input(event, paused)
+            graph_input, notice = prepare_input(event, paused)
+            if graph_input is None:
+                update_message(placeholder, notice)
+                return
 
         # A typed reply to a paused booking is a resume as much as a button is.
         if paused and decision is None:
@@ -972,7 +1042,7 @@ def process_event(event: dict, decision: str | None = None) -> None:
             update_message(placeholder, f"_{chunk.get('text', 'Working…')}_")
 
         if interrupt_value := _pending_interrupt(thread_id):
-            text = interrupt_value.get("message", "")
+            text = notice + interrupt_value.get("message", "")
             if interrupt_value.get("type") == "confirm":
                 update_message(placeholder, "", card=confirm_card(text))
             else:
@@ -982,7 +1052,7 @@ def process_event(event: dict, decision: str | None = None) -> None:
         final = _graph.get_state(cfg).values
         messages = final.get("messages") or []
         reply = messages[-1].content if messages else "(no response)"
-        update_message(placeholder, str(reply))
+        update_message(placeholder, notice + str(reply))
 
     except Exception as exc:
         logger.exception("Graph run failed for %s", thread_id)
