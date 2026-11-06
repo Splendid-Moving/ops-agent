@@ -44,6 +44,16 @@ def test_usa_suffix_is_stripped():
     assert "USA" not in address._to_calendar_format("1 Main St, Burbank, CA 91505, USA")
 
 
+def test_usa_suffix_is_stripped_from_any_address():
+    from services.formatting import format_address, strip_country
+    assert format_address("1126 Wilcox Pl #4, Los Angeles CA 90038, USA") == (
+        "1126 Wilcox Pl #4, Los Angeles CA 90038"
+    )
+    assert strip_country("130 S Alexandria Ave #202, Los Angeles CA 90004, USA") == (
+        "130 S Alexandria Ave #202, Los Angeles CA 90004"
+    )
+
+
 # ── Verdict handling ───────────────────────────────────────────────────────────
 
 def test_blank_address_is_unresolved_without_an_api_call():

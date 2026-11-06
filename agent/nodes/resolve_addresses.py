@@ -22,6 +22,7 @@ from schemas import checklist as cl
 from agent.state import OpsAgentState
 from schemas.intake import ADDRESS_FIELDS
 from services import address as address_service
+from services.formatting import strip_country
 from services.address import AddressValidationUnavailable, Verdict
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,8 @@ def resolve_addresses(state: OpsAgentState) -> dict:
         # unverified, so a human still sees them before anything is booked.
         logger.error("Address validation unavailable: %s", exc)
         progress.warn("Could not verify addresses", "using them exactly as written")
+        for name in candidates:
+            intake[name] = strip_country(intake[name])
         intake["address_status"] = {
             name: f"unverified — {exc}" for name in candidates
         }
@@ -64,7 +67,8 @@ def resolve_addresses(state: OpsAgentState) -> dict:
             status[name] = "confirmed"
         else:
             # Keep what the user gave us. Overwriting with a guess is how a
-            # truck ends up in the wrong city.
+            # truck ends up in the wrong city. (Only a trailing ", USA" goes.)
+            intake[name] = strip_country(intake[name])
             status[name] = f"{result.verdict.value}: {result.note}"
             if result.formatted:
                 status[name] += f" | suggested: {result.formatted}"

@@ -211,6 +211,14 @@ def strip_address_label(raw: str) -> str:
         text = stripped
 
 
+_COUNTRY_SUFFIX = re.compile(r",?\s*(?:USA|U\.S\.A\.?|US|United States(?: of America)?)\s*$", re.IGNORECASE)
+
+
+def strip_country(raw: str) -> str:
+    """Drop a trailing country ("..., USA"); the house format never has one."""
+    return _COUNTRY_SUFFIX.sub("", str(raw or "").strip()).strip()
+
+
 def format_address(raw: str) -> str:
     """
     Normalize to: 544 E Amazing St, Burbank CA 91501
@@ -223,7 +231,7 @@ def format_address(raw: str) -> str:
     """
     if not raw:
         return ""
-    addr = strip_address_label(raw)
+    addr = strip_country(strip_address_label(raw))
     addr = re.sub(r"\s+", " ", addr.strip())
     # ZIP+4 -> ZIP5
     addr = re.sub(r"\b(\d{5})-\d{4}\b", r"\1", addr)
