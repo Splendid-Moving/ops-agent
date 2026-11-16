@@ -87,6 +87,11 @@ act_contact ──┬──► act_calendar ──┐
                               report ──► END
 ```
 
+The sketch above is simplified. For the exact, always-current graph (every node,
+including `site`, `act_app_job`, `act_sms` and `give_up`), see
+[`docs/graph.md`](docs/graph.md). It is generated from the code by
+`uv run python draw_graph.py`; re-run that after changing `agent/graph.py`.
+
 Those two ⏸ pauses are the whole reason this is a LangGraph app rather than a
 script. The graph genuinely stops — for a second or an hour — and resumes at
 the same spot when the answer arrives.
