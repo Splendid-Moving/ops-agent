@@ -7,6 +7,11 @@ Generated from `agent/graph.py` by `draw_graph.py`. Do not edit by hand.
   parallel booking actions after `execute`).
 - `ask_missing` and `confirm` pause and wait for a human reply before continuing.
 
+![Ops agent graph](graph.png)
+
+<details>
+<summary>Diagram source (Mermaid)</summary>
+
 ```mermaid
 ---
 config:
@@ -66,3 +71,5 @@ graph TD;
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
 ```
+
+</details>

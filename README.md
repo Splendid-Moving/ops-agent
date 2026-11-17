@@ -89,8 +89,10 @@ act_contact ──┬──► act_calendar ──┐
 
 The sketch above is simplified. For the exact, always-current graph (every node,
 including `site`, `act_app_job`, `act_sms` and `give_up`), see
-[`docs/graph.md`](docs/graph.md). It is generated from the code by
+[`docs/graph.png`](docs/graph.png) (shown with a legend in
+[`docs/graph.md`](docs/graph.md)). Both are generated from the code by
 `uv run python draw_graph.py`; re-run that after changing `agent/graph.py`.
+For a live, clickable version, run `langgraph dev` to open LangGraph Studio.
 
 Those two ⏸ pauses are the whole reason this is a LangGraph app rather than a
 script. The graph genuinely stops — for a second or an hour — and resumes at
