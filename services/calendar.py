@@ -52,6 +52,35 @@ def get_service():
 
 # ── Description format ─────────────────────────────────────────────────────────
 
+def event_title(intake: dict) -> str:
+    """
+    Calendar event title: the customer's name, "(labor)" for labor-only jobs
+    (load-bearing — analytics counts labor jobs by it), and "(N trucks)" when a
+    job needs two or more trucks so the crew sees it at a glance.
+    """
+    from services import rates
+
+    name = (intake.get("full_name") or "").strip()
+    if intake.get("is_labor"):
+        return f"{name} (labor)"
+    trucks = rates.truck_count(intake)
+    return f"{name} ({trucks} trucks)" if trucks >= 2 else name
+
+
+def notes_with_trucks(notes: str, trucks: int) -> str:
+    """
+    Puts "- N trucks" at the top of the Notes block for multi-truck jobs.
+
+    It goes in Notes rather than a new "Trucks:" line on purpose: the
+    description is a wire format (see build_description) and a new "Word:" line
+    would inject a field into four other pipelines. A "- " note line is inert.
+    """
+    if trucks < 2:
+        return notes
+    line = f"- {trucks} trucks"
+    return f"{line}\n{notes}" if (notes or "").strip() else line
+
+
 def build_description(
     *,
     customer: str,

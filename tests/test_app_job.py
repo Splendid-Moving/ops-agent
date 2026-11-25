@@ -95,10 +95,12 @@ def test_tbd_address_goes_in_blank_and_is_flagged(intake):
     assert "Drop-off address TBD" in p["job_notes"]
 
 
-def test_unsupported_crew_size_sends_no_rates(intake):
-    intake["movers"] = "5"
+def test_big_crew_sends_the_typed_rate_and_trucks(intake):
+    intake.update(movers="6", rate="250/270", trucks="2")
     p = actions.app_job_payload(intake)
-    assert p["movers_required"] is None and p["cash_rate_per_hour"] is None
+    assert p["movers_required"] == 6
+    assert (p["cash_rate_per_hour"], p["card_rate_per_hour"]) == (250, 270)
+    assert "2 TRUCKS." in p["job_notes"]
 
 
 def test_unparseable_date_refuses_rather_than_guessing(intake):

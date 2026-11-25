@@ -71,7 +71,7 @@ def main() -> int:
 
     # ── Pure logic ─────────────────────────────────────────────────────────────
     section("Rate table")
-    for movers in rates.VALID_MOVER_COUNTS:
+    for movers in rates.SUPPORTED_MOVER_COUNTS:
         print(f"  {OK} {movers} movers — {rates.format_rate(movers)}")
 
     # ── Google Calendar ────────────────────────────────────────────────────────

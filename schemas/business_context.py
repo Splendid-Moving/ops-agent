@@ -68,7 +68,8 @@ Thumbtack, referrals and previous customers.
     2 movers — $115 cash / $125 card
     3 movers — $145 cash / $155 card
     4 movers — $180 cash / $190 card
-  Crews of 5 or 6 exist but are priced by hand and are not automated.
+  Bigger crews (5+ movers) are special jobs: the dispatcher gives the rate \
+(cash / card) and the number of trucks, which may be two or more.
 - A **labor-only** job is loading/unloading help with no transport — one \
 address instead of two. Everything else is a full move between two addresses, \
 occasionally with an extra stop.
@@ -111,7 +112,7 @@ Splendid Moving is a Los Angeles moving company. These screenshots are customer 
 enquiries, usually from Yelp, SMS or email.
 
 Useful background:
-- Jobs are billed hourly by crew size (2, 3 or 4 movers).
+- Jobs are billed hourly by crew size (usually 2, 3 or 4 movers; occasionally more).
 - A "labor-only" job is loading/unloading help with no truck — one address.
 - An arrival WINDOW ("8-9am") is normal; a precise start time is not.
 - Most addresses are in the LA area: Burbank, Glendale, Pasadena, Long Beach, \

@@ -46,7 +46,7 @@ from agent.state import (
 from schemas import checklist as cl
 from schemas import email_template
 from services import calendar, config, errors, fees, formatting, ghl, jobs_app, maps, rates
-from services.ghl import CustomField
+from services.ghl import PICKLIST_VALUES, CustomField
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,16 @@ def _contact_id(state: OpsAgentState) -> str:
     return (state.get("ledger") or {}).get(ACTION_CONTACT, {}).get("result", {}).get("contact_id", "")
 
 
+def _ghl_option(field_id: str, value) -> str:
+    """
+    The value if the GHL dropdown has it, else blank. Movers only goes up to 6
+    and Trucks up to 3 there; a bigger job must still book rather than have the
+    whole contact write rejected over one dropdown.
+    """
+    value = str(value or "").strip()
+    return value if value in PICKLIST_VALUES.get(field_id, {value}) else ""
+
+
 # ── 1. Contact (gate) ──────────────────────────────────────────────────────────
 
 @action(ACTION_CONTACT)
@@ -182,10 +192,15 @@ def act_upsert_contact(state: OpsAgentState) -> dict:
         CustomField.EXTRA_STOP: intake.get("extra_stop", ""),
         CustomField.MOVING_DATE: intake.get("move_date", ""),
         CustomField.ARRIVAL_TIME: intake.get("arrival_time", ""),
-        CustomField.MOVERS: str(intake.get("movers", "")),
-        CustomField.RATE: rates.format_rate(intake.get("movers", "")),
+        CustomField.MOVERS: _ghl_option(CustomField.MOVERS, intake.get("movers", "")),
+        # A custom (5+ mover) rate has no dropdown option and is left blank;
+        # the calendar, email and crew app carry it.
+        CustomField.RATE: rates.ghl_rate_option(intake),
         CustomField.JOB_NOTES: intake.get("job_notes", ""),
     }
+    if not intake.get("is_labor") and intake.get("trucks"):
+        custom_fields[CustomField.TRUCKS] = _ghl_option(
+            CustomField.TRUCKS, str(rates.truck_count(intake)))
     if intake.get("is_labor"):
         custom_fields[CustomField.LABOR] = "Labor"
 
@@ -236,17 +251,18 @@ def act_calendar_event(state: OpsAgentState) -> dict:
         to_address=dropoff,
         extra_stop=extra_stop,
         distance=distance,
-        rate=rates.format_rate(intake.get("movers", "")),
+        rate=rates.format_effective_rate(intake),
         movers=str(intake.get("movers", "")),
         # Tracks whether the deposit has been PAID, not what was billed. A
         # separate existing automation rewrites this once payment lands.
         deposit=config.CALENDAR_DEPOSIT_PLACEHOLDER,
         source=intake.get("source", ""),
-        notes=intake.get("job_notes", ""),
+        notes=calendar.notes_with_trucks(intake.get("job_notes", ""),
+                                         rates.truck_count(intake)),
     )
 
     return calendar.create_event(
-        title=intake.get("full_name", "") + (" (labor)" if intake.get("is_labor") else ""),
+        title=calendar.event_title(intake),
         description=description,
         start_iso=start_iso,
         end_iso=end_iso,
@@ -265,6 +281,13 @@ def _address_or_blank(value: str) -> str:
     """
     value = (value or "").strip()
     return "" if not value or cl.is_tbd(value) else value
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def app_job_payload(intake: dict, contact_id: str = "") -> dict:
@@ -293,12 +316,15 @@ def app_job_payload(intake: dict, contact_id: str = "") -> dict:
     dropoff = "" if is_labor else _address_or_blank(intake.get("dropoff_address", ""))
     extra_stop = _address_or_blank(intake.get("extra_stop", ""))
 
-    rate = rates.rate_for(intake.get("movers", ""))
+    rate = rates.effective_rate(intake)
+    trucks = rates.truck_count(intake)
     office_fees = fees.parse_fees(intake.get("job_notes", ""))
 
     notes = [f"Arrival window: {intake.get('arrival_time', '').strip()}"]
     if is_labor:
         notes.append("LABOR ONLY — no transport.")
+    if trucks >= 2:
+        notes.append(f"{trucks} TRUCKS.")
     if not pickup:
         notes.append("Pickup address TBD.")
     if not is_labor and not dropoff:
@@ -319,7 +345,7 @@ def app_job_payload(intake: dict, contact_id: str = "") -> dict:
         "origin_address": pickup,
         "destination_address": dropoff,
         "extra_stop": extra_stop,
-        "movers_required": rate.movers if rate else None,
+        "movers_required": rate.movers if rate else _int_or_none(intake.get("movers")),
         "cash_rate_per_hour": rate.cash if rate else None,
         "card_rate_per_hour": rate.card if rate else None,
         "lead_source": (intake.get("source") or "").strip(),

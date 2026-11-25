@@ -247,8 +247,13 @@ to one of its options is accepted by the API and then silently discarded,
 leaving the job with no rate. `services/rates.py` holds the exact strings and a
 test pins them.
 
-**Crews of 5 and 6 are deliberately out of scope.** GoHighLevel accepts them,
-but they are priced by hand.
+**Crews of 5 or more need a typed rate.** Only 2, 3 and 4 movers have a
+standard rate. For any bigger crew the bot asks for the rate (type it as
+`cash / card`, e.g. `250/270`) and for the number of trucks (just a number).
+With 2+ trucks the calendar event is titled `Name (2 trucks)`, and the trucks
+show in the confirmation email, the calendar notes and the crew app. GHL's Rate
+dropdown has no option for a custom rate, so that one field is left blank in
+GHL (as are Movers above 6 and Trucks above 3) — the confirm summary says so.
 
 **The confirmation email renders its own values.** GoHighLevel only substitutes
 `{{contact.*}}` when GHL itself sends a template; this agent posts raw HTML, so

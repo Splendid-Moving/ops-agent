@@ -43,7 +43,10 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
     name = intake.get("full_name", "?")
     labor = intake.get("is_labor")
     movers = intake.get("movers", "?")
-    rate = rates.format_rate(movers) or "(no standard rate)"
+    rate = rates.format_effective_rate(intake) or "(no rate)"
+    if rates.needs_custom_rate(movers) and rate != "(no rate)":
+        rate += " (custom)"
+    trucks = rates.truck_count(intake)
     deposit = config.deposit_amount()
 
     lines = [
@@ -55,8 +58,12 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
         f"  Email       {intake.get('email', '?')}",
         f"  Date        {intake.get('move_date', '?')} at {intake.get('arrival_time', '?')}",
         f"  Crew        {movers} movers — {rate}",
-        f"  Pickup      {_address_line(intake.get('pickup_address', '?'))}",
     ]
+    if not labor and (trucks >= 2 or intake.get("trucks")):
+        lines.append(f"  Trucks      {trucks}")
+    if trucks >= 2:
+        lines.append(f"  Event title {calendar.event_title(intake)}")
+    lines.append(f"  Pickup      {_address_line(intake.get('pickup_address', '?'))}")
     if intake.get("extra_stop"):
         lines.append(f"  Extra stop  {intake['extra_stop']}")
     if not labor:
@@ -96,6 +103,21 @@ def _summary(intake: dict, warnings: dict, duplicate: dict | None,
 
     if warnings:
         lines += ["", "⚠️  " + "; ".join(warnings.values())]
+
+    # GHL's dropdowns only hold the standard options; say what stays blank there
+    # so nobody thinks the booking lost it.
+    ghl_blank = []
+    if rates.needs_custom_rate(movers):
+        ghl_blank.append("Rate")
+    if str(movers) not in ghl.PICKLIST_VALUES[ghl.CustomField.MOVERS]:
+        ghl_blank.append("Movers")
+    if trucks >= 2 and str(trucks) not in ghl.PICKLIST_VALUES[ghl.CustomField.TRUCKS]:
+        ghl_blank.append("Trucks")
+    if ghl_blank:
+        dropdowns = " and ".join(ghl_blank) + (" dropdowns have" if len(ghl_blank) > 1
+                                                else " dropdown has")
+        lines += ["", f"FYI: GoHighLevel's {dropdowns} no option for this, so it's "
+                      "left blank there. Everything else has it."]
 
     # A phone that resolves to someone else's record is the dangerous case: the
     # booking would quietly overwrite a different customer's details, and every

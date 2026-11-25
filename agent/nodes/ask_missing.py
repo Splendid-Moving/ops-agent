@@ -88,7 +88,18 @@ class ParsedReply(BaseModel):
     arrival_time: str | None = Field(
         default=None, description="Compact window: '8-9am', '2-4pm', '11am-1pm'."
     )
-    movers: str | None = Field(default=None, description="Digits only: '2', '3', '4'.")
+    movers: str | None = Field(
+        default=None, description="Digits only, any crew size: '2', '3', '6', '10'.")
+    rate: str | None = Field(
+        default=None,
+        description=(
+            "Hourly rate the dispatcher gives for a special crew size, as "
+            "'cash/card' digits, e.g. '250/270'. Cash first, card second. Only "
+            "when they state it."
+        ),
+    )
+    trucks: str | None = Field(
+        default=None, description="Number of trucks, digits only: '1', '2'. Only if stated.")
     is_labor: bool | None = Field(
         default=None,
         description="True for labor-only, False for a full move, null if not addressed.",
@@ -200,7 +211,11 @@ in the future. If a date is genuinely ambiguous, leave it null and list it in \
 `unclear`.
 - **Arrival windows**: normalise to compact form. "eight to nine in the morning" \
 -> "8-9am". "2 to 4" in an afternoon context -> "2-4pm".
-- **Crew size**: digits only. "3 guys", "three movers", "3" all -> "3".
+- **Crew size**: digits only. "3 guys", "three movers", "3" all -> "3". Any \
+number is allowed, e.g. "8 guys" -> "8".
+- **Rate**: given as cash / card, e.g. "250/270" or "$250 cash $270 card" -> \
+rate = "250/270". A bare number pair answering the rate question is the rate.
+- **Trucks**: "2 trucks", "two", "2" answering the trucks question -> "2".
 - **Labor**: "labor only", "just loading help", "no truck" -> is_labor true. \
 "full move", "moving them from X to Y" -> false. Not mentioned -> null.
 - **Notes**: "none", "no", "nothing", "n/a" -> empty string, NOT null. The \

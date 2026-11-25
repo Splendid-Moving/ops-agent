@@ -119,7 +119,9 @@ class JobIntake(BaseModel):
 
     move_date: str = ""       # mm/dd/yyyy
     arrival_time: str = ""    # "8-9am"
-    movers: str = ""          # "2" | "3" | "4"
+    movers: str = ""          # any whole number; 2-4 have a standard rate
+    #: Asked only for more than 4 movers. Blank means one truck.
+    trucks: str = ""
 
     is_labor: bool | None = None
     job_notes: str = ""
@@ -129,7 +131,8 @@ class JobIntake(BaseModel):
     move_size: str = ""
     source: str = ""
 
-    #: Derived, not asked.
+    #: Derived for 2-4 movers. For any other crew size the dispatcher types it
+    #: ("250/270") and it is stored as "$250 cash /$270 card".
     rate: str = ""
 
     #: Per-address validation verdicts, keyed by field name.
@@ -137,15 +140,15 @@ class JobIntake(BaseModel):
 
     def label(self) -> str:
         """Calendar event title. The '(labor)' suffix is load-bearing downstream."""
-        name = self.full_name.strip() or "Unknown"
-        return f"{name} (labor)" if self.is_labor else name
+        from services.calendar import event_title
+        return event_title(self.model_dump())
 
 
 #: Fields the user can correct by name at the confirm gate.
 EDITABLE_FIELDS: tuple[str, ...] = (
     "full_name", "email", "phone",
     "pickup_address", "dropoff_address", "extra_stop",
-    "move_date", "arrival_time", "movers",
+    "move_date", "arrival_time", "movers", "trucks",
     "is_labor", "job_notes", "move_size", "source", "rate",
 )
 

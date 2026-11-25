@@ -15,12 +15,15 @@ an empty Rate field, re-query the live picklist first:
 `test_rate_strings_match_the_live_ghl_dropdown_exactly` pins these against
 PICKLIST_VALUES, but nothing can detect a UI-side edit except re-querying.
 
-Scope: the agent handles 2-, 3- and 4-mover jobs. GHL's `Movers` dropdown also
-allows 5 and 6, but those have no `Rate` option and are priced by hand — per the
-user, the agent will not be asked to book them, so they are explicitly out of
-scope rather than half-supported. `is_supported_crew_size` is the gate.
+Scope: 2, 3 and 4 movers have a standard rate (below). Any other crew size is a
+special job: the dispatcher types the rate as "cash / card" (e.g. "250/270") and
+it is carried on the intake as `rate`. `effective_rate` is the one place that
+decides which applies. A custom rate has no GHL `Rate` dropdown option, so the
+GHL field is left blank for those jobs — the calendar, email and crew app still
+show it.
 """
 
+import re
 from dataclasses import dataclass
 
 
@@ -46,8 +49,8 @@ RATES: dict[int, Rate] = {
 #: Crew sizes the agent can book end to end.
 SUPPORTED_MOVER_COUNTS = tuple(sorted(RATES))
 
-#: Sizes GHL accepts but the agent does not handle — priced by hand.
-OUT_OF_SCOPE_MOVER_COUNTS = (5, 6)
+#: Above this many movers the dispatcher is also asked how many trucks.
+MAX_SINGLE_TRUCK_MOVERS = 4
 
 
 def _as_int(movers: int | str) -> int | None:
@@ -62,13 +65,87 @@ def is_supported_crew_size(movers: int | str) -> bool:
     return _as_int(movers) in SUPPORTED_MOVER_COUNTS
 
 
-def is_out_of_scope_crew_size(movers: int | str) -> bool:
+def is_valid_crew_size(movers: int | str) -> bool:
+    """Any whole number of movers, one or more."""
+    count = _as_int(movers)
+    return count is not None and count >= 1
+
+
+def needs_custom_rate(movers: int | str) -> bool:
+    """A valid crew size with no standard rate — the dispatcher must give one."""
+    return is_valid_crew_size(movers) and not is_supported_crew_size(movers)
+
+
+def asks_for_trucks(movers: int | str) -> bool:
+    """More than 4 movers can mean more than one truck, so it is asked."""
+    count = _as_int(movers)
+    return count is not None and count > MAX_SINGLE_TRUCK_MOVERS
+
+
+_MONEY = r"\$?\s*(\d+(?:\.\d{1,2})?)"
+_CUSTOM_RATE = re.compile(
+    rf"^\s*{_MONEY}\s*(?:cash)?\s*(?:/|,|\band\b|\|)\s*{_MONEY}\s*(?:card)?\s*(?:/\s*h(?:ou)?r)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def parse_custom_rate(text: str) -> tuple[int, int] | None:
     """
-    True for 5 and 6 — real crew sizes GHL accepts, but priced by hand and
-    deliberately not automated. Distinguished from junk input so the agent can
-    say "that one's manual" instead of "that isn't a valid number".
+    "250/270", "$250 / $270", "$250 cash /$270 card" -> (250, 270).
+    Cash first, card second — the order the dispatcher types them in.
     """
-    return _as_int(movers) in OUT_OF_SCOPE_MOVER_COUNTS
+    m = _CUSTOM_RATE.match(str(text or ""))
+    if not m:
+        return None
+    cash, card = (round(float(v)) for v in m.groups())
+    if cash <= 0 or card <= 0:
+        return None
+    return cash, card
+
+
+def format_custom_rate(text: str) -> str:
+    """Canonical form, styled like the GHL options: "$250 cash /$270 card"."""
+    parsed = parse_custom_rate(text)
+    if parsed is None:
+        return str(text or "").strip()
+    cash, card = parsed
+    return f"${cash} cash /${card} card"
+
+
+def effective_rate(intake: dict) -> Rate | None:
+    """
+    The rate this job is billed at: the standard one for 2-4 movers, otherwise
+    the one the dispatcher typed. None when neither exists yet.
+    """
+    movers = intake.get("movers", "")
+    if standard := rate_for(movers):
+        return standard
+    count = _as_int(movers)
+    parsed = parse_custom_rate(intake.get("rate", ""))
+    if count is None or parsed is None:
+        return None
+    cash, card = parsed
+    return Rate(movers=count, cash=cash, card=card,
+                ghl_option=f"${cash} cash /${card} card")
+
+
+def format_effective_rate(intake: dict) -> str:
+    """Rate string for the calendar, the email and the confirm summary."""
+    rate = effective_rate(intake)
+    return rate.format() if rate else ""
+
+
+def ghl_rate_option(intake: dict) -> str:
+    """Only a standard rate can go in the GHL dropdown; a custom one goes blank."""
+    return format_rate(intake.get("movers", ""))
+
+
+def truck_count(intake: dict) -> int:
+    """How many trucks. 1 unless the dispatcher said otherwise; 0 for labor."""
+    if intake.get("is_labor"):
+        return 0
+    count = _as_int(intake.get("trucks", ""))
+    return count if count and count >= 1 else 1
 
 
 def rate_for(movers: int | str) -> Rate | None:

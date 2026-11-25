@@ -43,25 +43,21 @@ def test_rate_strings_match_the_live_ghl_dropdown_exactly():
 @pytest.mark.parametrize("size", [2, 3, 4])
 def test_supported_crew_sizes(size):
     assert rates.is_supported_crew_size(size)
-    assert not rates.is_out_of_scope_crew_size(size)
+    assert not rates.needs_custom_rate(size)
     assert rates.format_rate(size)
 
 
-@pytest.mark.parametrize("size", [5, 6])
-def test_five_and_six_are_out_of_scope_not_invalid(size):
-    """
-    Real crew sizes GHL accepts, priced by hand, deliberately not automated.
-    Kept distinct from junk input so the agent can explain rather than reject.
-    """
-    assert not rates.is_supported_crew_size(size)
-    assert rates.is_out_of_scope_crew_size(size)
+@pytest.mark.parametrize("size", [1, 5, 6, 7, 12])
+def test_other_crew_sizes_are_valid_but_need_a_typed_rate(size):
+    assert rates.is_valid_crew_size(size)
+    assert rates.needs_custom_rate(size)
     assert rates.format_rate(size) == ""
 
 
-@pytest.mark.parametrize("bad", [1, 7, 8, 0, -1, "many", "", None])
-def test_junk_crew_sizes_are_neither_supported_nor_out_of_scope(bad):
-    assert not rates.is_supported_crew_size(bad)
-    assert not rates.is_out_of_scope_crew_size(bad)
+@pytest.mark.parametrize("bad", [0, -1, "many", "", None])
+def test_junk_crew_sizes_are_invalid(bad):
+    assert not rates.is_valid_crew_size(bad)
+    assert not rates.needs_custom_rate(bad)
     assert rates.format_rate(bad) == ""
 
 

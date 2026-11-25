@@ -12,8 +12,10 @@ RULES ENCODED HERE
   required unless    drop-off address — not needed for labor-only jobs
     labor
   always asked       move date, arrival window, crew size, job notes
+  asked if 5+ movers rate, typed as "cash / card" (no standard rate exists)
+  asked if 5+ movers number of trucks (not on labor-only jobs)
   never asked        extra stop (captured only if volunteered)
-  derived            rate (from crew size), deposit (fixed)
+  derived            rate (from crew size, for 2-4 movers), deposit (fixed)
 """
 
 import re
@@ -76,14 +78,22 @@ def valid_arrival_time(value: str) -> str | None:
 
 
 def valid_movers(value: str) -> str | None:
-    if rates.is_supported_crew_size(value):
+    if rates.is_valid_crew_size(value):
         return None
-    if rates.is_out_of_scope_crew_size(value):
-        return (
-            f"{value}-mover jobs are priced by hand and aren't automated — "
-            "book that one directly in GHL."
-        )
-    return f"Crew size must be one of {', '.join(map(str, rates.SUPPORTED_MOVER_COUNTS))}."
+    return f"{value!r} isn't a number of movers. Give a whole number, e.g. 3 or 6."
+
+
+def valid_custom_rate(value: str) -> str | None:
+    if rates.parse_custom_rate(value) is None:
+        return f"Couldn't read {value!r} as a rate. Type it as cash / card, e.g. 250/270."
+    return None
+
+
+def valid_trucks(value: str) -> str | None:
+    digits = re.sub(r"\D", "", value)
+    if not digits or int(digits) < 1:
+        return f"{value!r} isn't a number of trucks. Give a whole number, e.g. 2."
+    return None
 
 
 
@@ -141,6 +151,8 @@ class FieldSpec:
     always_ask: bool = False
     #: Never proactively asked; captured only if volunteered.
     never_ask: bool = False
+    #: Only required when this returns True for the intake (None = always).
+    required_if: Callable[[dict], bool] | None = None
     examples: tuple[str, ...] = field(default=())
 
 
@@ -224,7 +236,28 @@ CHECKLIST: tuple[FieldSpec, ...] = (
         ask="How many movers?",
         validator=valid_movers,
         normalizer=lambda v: re.sub(r"\D", "", v) or v.strip(),
-        examples=("2", "3", "4"),
+        examples=("2", "3", "4", "6"),
+    ),
+    FieldSpec(
+        name="rate",
+        label="Rate",
+        required_for=("calendar", "email"),
+        ask="No standard rate for that crew size — what's the rate? (cash / card, e.g. 250/270)",
+        validator=valid_custom_rate,
+        normalizer=rates.format_custom_rate,
+        required_if=lambda intake: rates.needs_custom_rate(intake.get("movers", "")),
+        examples=("250/270",),
+    ),
+    FieldSpec(
+        name="trucks",
+        label="Trucks",
+        required_for=("calendar", "email"),
+        ask="How many trucks?",
+        validator=valid_trucks,
+        normalizer=lambda v: re.sub(r"\D", "", v) or v.strip(),
+        skip_if_labor=True,
+        required_if=lambda intake: rates.asks_for_trucks(intake.get("movers", "")),
+        examples=("1", "2"),
     ),
     FieldSpec(
         name="job_notes",
@@ -312,6 +345,8 @@ def evaluate(intake: dict) -> ChecklistResult:
         if spec.never_ask:
             continue
         if spec.skip_if_labor and is_labor is True:
+            continue
+        if spec.required_if is not None and not spec.required_if(intake):
             continue
 
         value = str(intake.get(spec.name, "") or "").strip()

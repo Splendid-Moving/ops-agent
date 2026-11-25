@@ -187,22 +187,16 @@ def test_supported_crew_sizes_accepted(size):
     assert cl.valid_movers(size) is None
 
 
-@pytest.mark.parametrize("size", ["5", "6"])
-def test_out_of_scope_crew_sizes_explain_themselves(size):
-    """
-    5 and 6 are real sizes GHL accepts but the agent doesn't automate. The
-    message must say 'do it by hand', not 'invalid number'.
-    """
-    error = cl.valid_movers(size)
-    assert error is not None
-    assert "by hand" in error or "aren't automated" in error
+@pytest.mark.parametrize("size", ["1", "5", "6", "7", "12"])
+def test_any_crew_size_is_accepted(size):
+    assert cl.valid_movers(size) is None
 
 
-@pytest.mark.parametrize("size", ["1", "7", "12", "many"])
+@pytest.mark.parametrize("size", ["0", "many"])
 def test_nonsense_crew_sizes_rejected_plainly(size):
     error = cl.valid_movers(size)
     assert error is not None
-    assert "must be one of" in error
+    assert "whole number" in error
 
 
 @pytest.mark.parametrize("bad", ["", "abc", "Maple Ave"])

@@ -147,7 +147,8 @@ def _detail_rows(intake: dict) -> str:
     """
     is_labor = bool(intake.get("is_labor"))
     name = intake.get("full_name", "")
-    rate = rates.format_rate(intake.get("movers", ""))
+    rate = rates.format_effective_rate(intake)
+    trucks = rates.truck_count(intake)
 
     rows = [_row("Customer", name)] if name else []
     rows += [
@@ -164,6 +165,8 @@ def _detail_rows(intake: dict) -> str:
         rows.append(_row("Rate", rate))
     if movers := intake.get("movers"):
         rows.append(_row("Movers", str(movers)))
+    if trucks >= 2:
+        rows.append(_row("Trucks", str(trucks)))
     if is_labor:
         rows.append(_row("Service", "Labor only (no transport)"))
 
